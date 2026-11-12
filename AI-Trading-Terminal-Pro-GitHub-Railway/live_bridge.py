@@ -107,10 +107,18 @@ async def bridge_push(request: Request):
         raise HTTPException(422, "Invalid bridge payload")
     # Never accept broker credentials in this endpoint.
     key = _account_key(parsed)
-    item = {"received_at": time.time(), "snapshot": parsed.model_dump()}
+    now = time.time()
     with _lock:
-        _snapshots[key] = item
-    return {"received": True, "account_key": key, "mode": "READ_ONLY", "broker_orders_sent": 0}
+        previous = _snapshots.get(key, {})
+        frame_map = {k: v for k, v in previous.get("frame_map", {}).items()
+                     if now - v["received_at"] < MAX_AGE_SECONDS}
+        for frame in parsed.frames:
+            frame_map[(frame.symbol, frame.timeframe)] = {
+                "received_at": now, "frame": frame.model_dump()}
+        _snapshots[key] = {"received_at": now, "snapshot": parsed.model_dump(exclude={"frames"}),
+                           "frame_map": frame_map}
+    return {"received": True, "account_key": key, "mode": "READ_ONLY",
+            "broker_orders_sent": 0, "fresh_frames": len(frame_map)}
 
 @router.get("/api/live/accounts", dependencies=[Depends(dashboard_access)])
 def live_accounts():
@@ -120,7 +128,8 @@ def live_accounts():
         {"account_key": k, "platform": v["snapshot"]["platform"],
          "login": v["snapshot"]["login"], "broker": v["snapshot"]["broker"],
          "server": v["snapshot"]["server"], "currency": v["snapshot"]["currency"],
-         "symbols": sorted({f["symbol"] for f in v["snapshot"]["frames"]}),
+         "symbols": sorted({f["frame"]["symbol"] for f in v["frame_map"].values()
+                            if time.time()-f["received_at"] < MAX_AGE_SECONDS}),
          "age_seconds": _age(v), "fresh": _age(v) < MAX_AGE_SECONDS}
         for k, v in items
     ]}
@@ -135,9 +144,11 @@ def _get(key):
 @router.get("/api/live/snapshot/{key}", dependencies=[Depends(dashboard_access)])
 def live_snapshot(key: str):
     item = _get(key)
+    frames = [v["frame"] for v in item["frame_map"].values()
+              if time.time()-v["received_at"] < MAX_AGE_SECONDS]
     return {"mode": "READ_ONLY", "age_seconds": _age(item),
-            "fresh": _age(item) < MAX_AGE_SECONDS,
-            **item["snapshot"]}
+            "fresh": _age(item) < MAX_AGE_SECONDS, **item["snapshot"],
+            "frames": sorted(frames, key=lambda f: (f["symbol"], f["timeframe"]))}
 
 class AnalysisRequest(BaseModel):
     account_key: str
@@ -148,7 +159,9 @@ def live_analyze(body: AnalysisRequest):
     item = _get(body.account_key)
     if _age(item) >= MAX_AGE_SECONDS:
         raise HTTPException(409, "Stale broker data. Wait for a new EA snapshot")
-    frames = [f for f in item["snapshot"]["frames"] if f["symbol"] == body.symbol]
+    frames = [v["frame"] for v in item["frame_map"].values()
+              if v["frame"]["symbol"] == body.symbol
+              and time.time()-v["received_at"] < MAX_AGE_SECONDS]
     if len(frames) < 2:
         raise HTTPException(422, "Insufficient timeframe coverage")
     if not os.getenv("GEMINI_API_KEY"):
