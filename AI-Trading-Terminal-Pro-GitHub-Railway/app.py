@@ -19,20 +19,48 @@ class Approval(BaseModel):
 
 signals = {}
 
-def candles(symbol):
-    if symbol not in SYMBOLS: raise HTTPException(404,'Unknown symbol')
+TIMEFRAMES = {
+    'M1': 60, 'M5': 300, 'M15': 900, 'M30': 1800,
+    'H1': 3600, 'H4': 14400, 'D1': 86400, 'W1': 604800, 'MN1': 2592000,
+}
+# Deterministic historical sample data for UI development only.
+# All timeframes use independent illustrative candles, not broker prices.
+
+def candles(symbol, timeframe='H1'):
+    if symbol not in SYMBOLS:
+        raise HTTPException(404, 'Unknown symbol')
+    if timeframe not in TIMEFRAMES:
+        raise HTTPException(422, 'Unsupported timeframe')
+    seconds=TIMEFRAMES[timeframe]
+    rng=random.Random(f'{symbol}:{timeframe}:demo-v3')
     base=prices[symbol]
-    rng=random.Random(symbol)
-    scale=base*.0015
+    scale=base*({'M1':.00018,'M5':.00034,'M15':.00048,'M30':.0007,
+                'H1':.001,'H4':.002,'D1':.004,'W1':.008,'MN1':.013}[timeframe])
+    end_at=int(datetime(2026,11,1,tzinfo=timezone.utc).timestamp())
+    end_at-=end_at % seconds
     rows=[]
-    for i in range(120):
+    for i in range(180):
         o=base
-        c=o+rng.uniform(-scale,scale)
+        change=rng.uniform(-scale,scale)
+        c=max(.00001,o+change)
         h=max(o,c)+rng.uniform(0,scale*.5)
-        l=min(o,c)-rng.uniform(0,scale*.5)
-        rows.append({'time':int(datetime(2026,1,1,tzinfo=timezone.utc).timestamp())+i*3600,'open':round(o,5),'high':round(h,5),'low':round(l,5),'close':round(c,5)})
+        l=max(.00001,min(o,c)-rng.uniform(0,scale*.5))
+        rows.append({'time':end_at-(179-i)*seconds,
+                     'open':round(o,5),'high':round(h,5),
+                     'low':round(l,5),'close':round(c,5)})
         base=c
     return rows
+
+def technical_signal(symbol, timeframe):
+    rows=candles(symbol,timeframe)
+    closes=[r['close'] for r in rows]
+    fast=sum(closes[-10:])/10
+    slow=sum(closes[-30:])/30
+    direction='BUY' if fast>slow else 'SELL'
+    strength=min(35,abs(fast-slow)/max(abs(slow),1e-8)*10000)
+    return {'timeframe':timeframe,'side':direction,
+            'score':round(50+strength,1),
+            'technical':{'sma10':round(fast,5),'sma30':round(slow,5)}}
 
 @app.get('/', response_class=HTMLResponse)
 def home(): return (BASE/'index.html').read_text(encoding='utf-8')
@@ -40,22 +68,38 @@ def home(): return (BASE/'index.html').read_text(encoding='utf-8')
 @app.get('/api/status')
 def status(): return {'mode':'DEMO','broker':'DISCONNECTED','execution_enabled':False,'data':'SYNTHETIC','fundamentals':'NOT_CONNECTED'}
 
+@app.get('/api/timeframes')
+def list_timeframes():
+    return {'timeframes':list(TIMEFRAMES.keys()),'mode':'DEMO'}
+
 @app.get('/api/candles/{symbol}')
-def get_candles(symbol:str): return {'symbol':symbol,'timeframe':'H1','source':'SYNTHETIC_DEMO','candles':candles(symbol)}
+def get_candles(symbol:str, timeframe:str='H1'):
+    return {'symbol':symbol,'timeframe':timeframe,'source':'SYNTHETIC_DEMO',
+            'candles':candles(symbol,timeframe)}
 
 @app.post('/api/analyze/{symbol}')
-def analyze(symbol:str):
-    rows=candles(symbol)
-    closes=[r['close'] for r in rows]
-    fast=sum(closes[-10:])/10
-    slow=sum(closes[-30:])/30
-    direction='BUY' if fast>slow else 'SELL'
-    # This is a deterministic technical heuristic, not AI, probability, or financial advice.
-    score=round(min(85,50+abs(fast-slow)/max(abs(slow),1e-8)*10000),1)
+def analyze(symbol:str, timeframe:str='H1'):
+    result=technical_signal(symbol,timeframe)
     sid=str(uuid.uuid4())
-    result={'id':sid,'symbol':symbol,'side':direction,'score':score,'score_type':'HEURISTIC_NOT_PROBABILITY','technical':{'sma10':round(fast,5),'sma30':round(slow,5)},'fundamental':'UNAVAILABLE','state':'PENDING_APPROVAL','data_source':'SYNTHETIC_DEMO','disclaimer':'No live market data. No broker order will be placed.'}
+    result.update({'id':sid,'symbol':symbol,'score_type':'HEURISTIC_NOT_PROBABILITY',
+                   'fundamental':'UNAVAILABLE','state':'PENDING_APPROVAL',
+                   'data_source':'SYNTHETIC_DEMO',
+                   'disclaimer':'No live market data. No broker order will be placed.'})
     signals[sid]=result
     return result
+
+@app.get('/api/analyze-multi/{symbol}')
+def analyze_multi(symbol:str):
+    frames=['M15','H1','H4','D1']
+    results=[technical_signal(symbol,tf) for tf in frames]
+    buy=sum(r['side']=='BUY' for r in results)
+    sell=len(results)-buy
+    consensus='BUY' if buy>=3 else 'SELL' if sell>=3 else 'MIXED'
+    return {'symbol':symbol,'timeframes':results,'consensus':consensus,
+            'buy_count':buy,'sell_count':sell,
+            'source':'SYNTHETIC_DEMO',
+            'fundamental':'UNAVAILABLE',
+            'note':'Demo SMA alignment only. Not predictive confidence, not an executable signal.'}
 
 @app.post('/api/approve')
 def approve(body:Approval):
