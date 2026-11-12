@@ -7,6 +7,10 @@ from datetime import datetime, timezone
 import random, uuid
 
 app = FastAPI(title='AI Trading Terminal Pro - Demo MVP')
+
+# Optional read-only broker telemetry; requires Railway environment tokens.
+from live_bridge import router as live_router
+app.include_router(live_router)
 BASE = Path(__file__).parent
 random.seed(14)
 SYMBOLS = ['XAUUSD','XAGUSD','EURUSD','GBPUSD','USDJPY','USOIL']
