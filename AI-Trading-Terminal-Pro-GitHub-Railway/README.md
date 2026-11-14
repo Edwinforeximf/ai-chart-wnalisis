@@ -81,3 +81,44 @@ Generate tokens locally in a secure password manager; never send login passwords
 - There is **no fundamental news feed**: AI always marks fundamental analysis NOT_CONNECTED.
 - No AI confidence means guaranteed probability; no live Close All or auto-entry endpoints.
 - Only execute through actual MT4/MT5 terminals with separate controls after a security, risk and integration review.
+
+
+## v5 — Mobile dashboard PIN, tabs, concise AI
+
+The \`/live\` dashboard now uses **4-digit dashboard PIN authentication** and an 8-hour
+Secure + HttpOnly + SameSite=Strict cookie. This is *read-only convenience
+authentication* — a 4-digit PIN is weaker than a full password or MFA.
+
+### Required Railway variables for the new login
+- \`DASHBOARD_PIN\`: exactly **four digits**, e.g., a unique PIN that you choose in
+  the Railway Variables UI. **Never enter it in GitHub or share it in chat.**
+- Keep \`BRIDGE_TOKEN\` unchanged (existing MT4/MT5 EA installations use it).
+- Keep \`GEMINI_API_KEY\` and \`GEMINI_MODEL\` unchanged.
+- \`DASHBOARD_TOKEN\` continues to work as a long API Bearer token, but the new browser
+  dashboard only accepts PIN; you may retain this secret for external read-only
+  clients, or omit it if unused. Do not put it in the browser.
+- Use exactly **one Railway web replica** for this MVP because PIN sessions,
+  lockout counters and broker snapshots are stored in per-process memory.
+  Restarting Railway logs users out and loses recent snapshots until the next EA push.
+
+### UX changes
+- Four top-level tabs: **Overview, Chart, AI Signal, History**.
+- History uses five rows per page and Previous/Next buttons.
+- AI returns one concise technical BUY/SELL bias + a **confidence alignment score**
+  derived from native MetaTrader indicators. It is **not** a calibrated probability
+  of profit. A low score (<60) is marked **Low alignment · No entry**.
+- Gemini adds just one short rationale and one brief risk.
+- No WAIT label, but no forced trade execution: contradictory signals can have a low
+  alignment score and always stay read-only.
+- Fundamental news remains **NOT_CONNECTED**.
+- Existing demo dashboard and native MT4/MT5 EA data bridge stay intact.
+
+### Security considerations
+- 4-digit PIN is suitable only for a restricted read-only prototype; it is **not**
+  sufficient authentication for future live trade operations. Before enabling
+  trading, add per-user accounts, strong passwords/MFA, isolated account access,
+  durable PostgreSQL sessions and distributed rate limiting.
+- Login attempts are limited in-process (five failed attempts per remote address
+  per 15 minutes and an additional global cap). Clearing the process resets those
+  limits. HTTPS is required for the session cookie.
+- All trading and bulk-close operations are disabled in /live.
