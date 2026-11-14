@@ -222,3 +222,7 @@ sending live orders.
   durable command logs.
 - MT4/MT5 code needs actual MetaEditor compilation and broker demo testing
   before any claims of operational compatibility.
+
+### Remote kill switch (Railway)
+
+`DEMO_EA_STRATEGY_ENABLED` defaults to **false**. All EA strategy replies remain `BLOCK` unless this Railway Variable is explicitly set to `true`. It is a second permission gate independent of the EA's `EnableDemoOrders` input. Only enable after verifying all demo safety checks; set it back to `false` to stop *new* EA entries. Existing EA positions are not automatically closed when disabled; their broker stop-loss and take-profit remain active.
