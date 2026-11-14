@@ -142,3 +142,87 @@ authentication* — a 4-digit PIN is weaker than a full password or MFA.
 - For Chrome mobile if old login appears: open
   \`https://ai-chart-wnalisis-production.up.railway.app/live?v=51\`.
 - The only newly required setup remains \`DASHBOARD_PIN\` set in Railway Variables.
+
+
+## v6 — AI-assisted DEMO auto-entry and Cut & Switch
+
+### What changed
+This version prepares a **separate demo-only EA** for MT4 and MT5 that can request
+a fresh strategy verdict from Railway. This is **not live-money trading**.
+
+- \`bridges/MT4_AutoSwitch_DEMO.mq4\` and \`bridges/MT5_AutoSwitch_DEMO.mq5\`
+  are **new, distinct EAs**. They do not replace the read-only
+  \`MT4_IndicatorBridge.mq4\` / \`MT5_IndicatorBridge.mq5\` that send indicator data.
+- \`POST /api/bridge/strategy\` requires the \`BRIDGE_TOKEN\` already used by the
+  existing read-only EA. Never expose it in the browser.
+- A server-side technical planner reads broker-native M15, H1, H4 (and available
+  other timeframes). H1/H4 must confirm the BUY/SELL bias; ADX(H1) >= 18,
+  ATR(H1) > 0, score >= 51 and fresh frame data are required.
+- Gemini is a **veto**, not the trading risk engine: it must agree with the
+  technical direction. Invalid/stale/missing data, API failure or disagreement
+  blocks entry. Gemini agreement is cached per H1 candle to limit costs.
+- 51% means an **indicator alignment score**, *not* an estimated win rate.
+- BUY/SELL signal shown in the dashboard remains **read-only**. Cut & Switch is
+  handled by the separate opt-in EA, not a dashboard button.
+
+### Cut & Switch rules
+1. The EA only manages its own positions (unique EA Magic number), never
+   manually opened positions or positions belonging to another EA.
+2. If a newly qualified opposite direction is received, the EA attempts to
+   close the existing position. A successful close is required. It does not
+   open an opposite position immediately in the same timer callback.
+3. After at least **120 seconds cooldown**, the EA polls the server **again**;
+   the strategy must still qualify, local quote/spread/risk checks must pass,
+   and no other position may exist for the symbol.
+4. At most two new positions per day by default. One EA position per symbol.
+   A stop-loss and take-profit are required on each entry, sized using H1 ATR.
+5. Default **FixedLot = 0.01**, estimated risk <= **0.25% equity per trade**,
+   daily equity drawdown >= **1%** blocks *new* entries. Risk and order execution
+   are checked by the EA using the local broker's contract specifications.
+
+### Installation on a Windows VPS (DEMO ACCOUNT ONLY)
+1. Keep your **existing read-only IndicatorBridge EA** on one chart to push
+   indicators to Railway every ~30s.
+2. Open a *second chart of the same symbol*. Install the new
+   \`MT4_AutoSwitch_DEMO.mq4\` (MT4) or \`MT5_AutoSwitch_DEMO.mq5\` (MT5)
+   in \`MQL4/Experts/\` or \`MQL5/Experts/\`. Compile through MetaEditor (F7).
+   The new source files have **not yet been tested in MetaEditor**.
+3. In terminal settings, enable **Allow WebRequest** to the HTTPS URL of Railway
+   and, when ready for demo trading, enable the terminal's **AutoTrading**.
+4. EA Inputs: set \`BridgeToken\` to the existing \`BRIDGE_TOKEN\` value from
+   Railway. It must **not** be the 4-digit dashboard PIN.
+5. Start with \`EnableDemoOrders=false\`. Confirm that the EA is seeing fresh
+   indicator snapshots, and no trade is sent.
+6. On an explicitly chosen **DEMO** account only, after verifying lot size,
+   symbol suffix, stop distances, spread, trading hours and account settings,
+   set \`EnableDemoOrders=true\` to begin a controlled forward test.
+   **Never put this new EA on an account with real funds.** The EA contains a
+   hard account-demo check; MT5 also requires a hedging-mode demo account.
+7. Keep one execution EA instance per symbol and account. Separate symbols
+   need separately tested EA instances and allocation limits.
+
+### Why there is no Entry button in /live
+The dashboard is deliberately read-only. The new execution EA sends approved
+orders directly from the broker's MetaTrader terminal; the Railway app only
+serves filtered signals. A four-digit PIN is inadequate authorization for
+sending live orders.
+
+### Known limitations and backtesting
+- This strategy has **not been backtested or profitability-validated**.
+  A score >=51 is **not** adequate evidence for live trading.
+- Need robust broker-specific acceptance tests for volume, stops, margin,
+  slippage, trade-server retcodes, swap, hedging/netting and market closures.
+- No fundamental news feed is connected, so calendar and high-impact news
+  blackout filters are **not available**. Keep real-money execution disabled.
+- WebRequest is unavailable in the native MetaTrader Strategy Tester; test
+  the signal strategy separately with historical fixtures and run the
+  end-to-end gateway as a forward test on a demo VPS account.
+- Railway in-memory snapshots/AI cache disappear on restart or scale-out; for
+  production replace with database/cache, per-account security and idempotent
+  durable command logs.
+- MT4/MT5 code needs actual MetaEditor compilation and broker demo testing
+  before any claims of operational compatibility.
+
+### Remote kill switch (Railway)
+
+`DEMO_EA_STRATEGY_ENABLED` defaults to **false**. All EA strategy replies remain `BLOCK` unless this Railway Variable is explicitly set to `true`. It is a second permission gate independent of the EA's `EnableDemoOrders` input. Only enable after verifying all demo safety checks; set it back to `false` to stop *new* EA entries. Existing EA positions are not automatically closed when disabled; their broker stop-loss and take-profit remain active.
