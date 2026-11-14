@@ -228,77 +228,51 @@ sending live orders.
 `DEMO_EA_STRATEGY_ENABLED` defaults to **false**. All EA strategy replies remain `BLOCK` unless this Railway Variable is explicitly set to `true`. It is a second permission gate independent of the EA's `EnableDemoOrders` input. Only enable after verifying all demo safety checks; set it back to `false` to stop *new* EA entries. Existing EA positions are not automatically closed when disabled; their broker stop-loss and take-profit remain active.
 
 
-## v7 — DEMO fundamental calendar + M5 scalping + risk-based lot sizing
+## v8 — Gemini AI compiling MT4/MT5 indicators and grounded fundamental research
 
-This is a research prototype, **not yet MetaEditor-compiled or backtested**.
-Never use v7 EAs on an account with real funds.
+This version **does not require Trading Economics** or any external economic
+calendar key. Use the existing GEMINI_API_KEY only. It enables Gemini Google
+Search grounding, which may use billed Search queries depending on plan.
+Check https://ai.google.dev/gemini-api/docs/google-search and pricing.
 
-### Trading Economics macro calendar
-- Railway environment: TRADING_ECONOMICS_API_KEY (requires a key with economic
-  calendar access; usage may be paid). Do not commit secrets.
-- Official docs: https://docs.tradingeconomics.com/economic_calendar/country/
-- The fundamental_gate.py module fetches high-impact events for currencies
-  corresponding to a broker symbol, e.g. XAUUSD.h => US, EURUSD => US + Euro Area.
-- Standard event blackout: 30 minutes before to 30 minutes after.
-  Major CPI / NFP / PCE / Fed events: 60 minutes before to 45 after.
-  Approximate-time releases block broadly (up to a day).
-- No API key, invalid/missing records, provider outage, or unsupported
-  symbol-country mapping always BLOCK new trades.
-- Recent official release calendar entries with actual/forecast are passed
-  to Gemini as a **fundamental compatibility veto**. This does not provide
-  calibrated directional macro predictions. CALENDAR_CLEAR is NOT a guarantee
-  of future price movement.
-- MT5 has a native economic-calendar API too, but the v7 implementation uses
-  the same provider cloud adapter for MT4 and MT5. Native MT5 backup is
-  reserved for future integration.
+### Integrated AI approach
+- Native terminal feed EA continues transmitting CLOSED chart candles and
+  EMA/RSI/MACD/ADX/ATR/Bollinger readings for all supported timeframes.
+- The AI screen calls POST /api/live/ai-compiled and shows a short BUY/SELL
+  technical bias, indicator-alignment score, brief fundamental synthesis
+  and web search citations. The dashboard **NEVER places an order**.
+- The model searches recent macro news and high-impact event schedules using
+  Gemini Google Search grounding. No results, missing grounding metadata,
+  missing event timestamps, conflicting bias or recent release danger
+  => cannot authorize new entry.
+- The Gemini response is not accepted solely because it sounds confident:
+  citations and the surrounding high-impact releases' UTC timestamps are
+  required. This still does not establish complete event coverage.
+- The backend only allows DEMO EA cut-and-switch if technical M1/M5/M15/H1
+  filters pass, macro AI agrees with the technical bias and news blackout
+  checks pass, while Railway DEMO_EA_STRATEGY_ENABLED is explicitly true.
+- Existing independent EA safety rules still govern maximum lot,
+  position count, free margin, spread, stop distance, cooldown and
+  daily loss limits. EA execution is DEMO ONLY and OFF by default.
 
-### M5 scalping rules
-- Indicator direction of M1, M5, M15, H1 must agree; H4 cannot contradict.
-- M15 ADX >= 20, M5 ATR > 0, M5 RSI 52–72 (BUY) / 28–48 (SELL).
-- Last CLOSED M5 bar is the entry-bar deduplication key.
-- Confidence >= 51 is only an **indicator-alignment screen**, not a
-  51% probability of winning.
-- Gemini must agree with the technical side and mark fundamental context
-  compatible; missing model / news feed or conflicting data causes BLOCK.
-- Cut & Switch remains cut -> confirm closed -> cooldown (180s) ->
-  re-evaluate fresh broker technical and news conditions -> consider switch.
+### Existing configuration
+- Keep GEMINI_API_KEY and GEMINI_MODEL in Railway Variables.
+- Keep DASHBOARD_PIN for the mobile dashboard and BRIDGE_TOKEN for EA-to-API.
+- **TRADING_ECONOMICS_API_KEY is NOT used** in v8 and can be deleted from
+  Railway Variables if it was previously configured.
+- The Railway GitHub root directory remains unchanged.
 
-### New, distinct DEMO-only EAs
-- bridges/MT4_Scalper_Fundamental_DEMO.mq4
-- bridges/MT5_Scalper_Fundamental_DEMO.mq5
-
-Both require the separate existing IndicatorBridge EA to publish candles to
-Railway; do not replace that EA. Put only one scalping EA on a separate chart.
-
-### Dynamic lots with a hard cap
-- Default risk per trade: 0.25% equity.
-- MaxLot default = 0.05 lot; it is a **cap**, not a guaranteed entry volume.
-- Lots are rounded DOWN to broker volume step based on M5 ATR stop-loss
-  and account equity. If the broker's minimum volume exceeds risk cap, skip.
-- MT5 uses OrderCalcProfit + OrderCalcMargin; MT4 estimates with broker
-  tick size and value (which may differ by contract and account).
-- Default SL = ATR(M5)*1.5, TP = ATR(M5)*2.0. Extra guard against spreads
-  >20% of SL distance; additional modeled 20% risk buffer (not a guarantee).
-- Max 3 new trades/day, max 1 open account-wide market position, max daily
-  equity drawdown 1%, and reversal cooldown 180 seconds. No martingale,
-  no averaging down, and only positions with this EA's magic are cut.
-- Actual losses can exceed estimates due to gaps, slippage and commissions.
-
-### VPS setup
-1. Keep old MT4_IndicatorBridge.mq4 or MT5_IndicatorBridge.mq5 attached.
-2. Copy and compile appropriate new v7 EA in MetaEditor (F7) on a **DEMO**
-   account, add Railway to Tools > Options > Expert Advisors WebRequest URLs.
-3. Enter the existing BRIDGE_TOKEN in EA Inputs. It is not the dashboard PIN.
-4. Check fundamental status and API permissions before attempting a demo
-   order. TRADING_ECONOMICS_API_KEY must have access to calendar endpoints.
-5. Leave BOTH independent permissions OFF initially:
-   Railway DEMO_EA_STRATEGY_ENABLED=false and EA EnableDemoOrders=false.
-6. After backtest, MetaEditor compilation and supervised forward testing only,
-   explicitly enable the DEMO gates. The EA hard-refuses real accounts.
-
-### Validation before considering a future live redesign
-Test on broker-quality historical quote and spread data plus dated events,
-commissions, swaps and realistic slippage. Check walk-forward expectancy
-after costs, drawdowns, profit factor, spread impact and reversal failures.
-Reject settings with negative expectancy. Railway roundtrip + Gemini AI
-latency make this unsuitable for tick-speed scalping; the horizon is M5.
+### No trading guarantees
+- Google Search grounding is web research, **not** a certified economic
+  calendar or market-data feed. AI cannot independently guarantee whether an
+  event is missing or what release time is accurate.
+- A score of 51% is a directional *indicator-alignment score*, not a
+  probability of winning. High-confidence text does not establish a strategy
+  edge.
+- The chart indicator bridge currently reads the **explicit native
+  indicators in the EA**, not arbitrary attached iCustom indicator buffers.
+  Custom indicators require explicit instrument-specific MQL integration.
+- Railway/AI/web-search latency makes this setup a research-level M5 bot,
+  not a tick-scalping or high-frequency trading system.
+- Do not enable auto-trading on a real account. Compile MQL in MetaEditor and
+  run historical and forward testing on DEMO before evaluating any redesign.

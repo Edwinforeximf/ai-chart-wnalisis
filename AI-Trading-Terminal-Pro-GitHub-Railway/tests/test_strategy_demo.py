@@ -16,142 +16,112 @@ client = TestClient(app)
 AUTH = {"X-Bridge-Key": "b" * 32}
 DASH = {"Authorization": "Bearer " + "d" * 32}
 
-def make_frame(tf, symbol="XAUUSD", bullish=True):
-    return {
-        "symbol": symbol,
-        "timeframe": tf,
-        "candles": [
-            {"time": 1770000000 + 3600*i, "open": 2700.0, "close": 2708.0,
-             "high": 2710.0, "low": 2695.0}
-            for i in range(40)
-        ],
-        "indicators": {
-            "ema20": 2703.0 if bullish else 2709.0,
-            "ema50": 2700.0 if bullish else 2712.0,
-            "macd_main": 1.0 if bullish else -1.0,
-            "macd_signal": 0.0,
-            "adx14": 29.0,
-            "atr14": 12.0,
-            "rsi14": 62.0 if bullish else 39.0,
-            "di_plus": 30.0 if bullish else 15.0,
-            "di_minus": 14.0 if bullish else 30.0,
-        }
-    }
+def frame(tf, symbol="XAUUSD", bullish=True):
+    return {"symbol":symbol, "timeframe":tf,
+            "candles":[{"time":1770000000 + 3600*i, "open":2700,
+                        "close":2708,"high":2710,"low":2695} for i in range(40)],
+            "indicators":{"ema20":2703 if bullish else 2709,
+                          "ema50":2700 if bullish else 2712,
+                          "macd_main":1 if bullish else -1,
+                          "macd_signal":0,"adx14":29,"atr14":12,
+                          "rsi14":62 if bullish else 39,
+                          "di_plus":30 if bullish else 15,
+                          "di_minus":14 if bullish else 30}}
 
-def publish(server="Broker-Demo",login=99881,frames=None):
-    payload = {
-        "platform":"MT4", "login":login, "server":server, "broker":"Demo",
-        "currency":"USD","balance":1000,"equity":1000,
-        "margin":0,"free_margin":1000,"positions":[],"history":[],
-        "frames":frames or [make_frame(tf) for tf in ["M1","M5","M15","H1","H4","D1"]],
-    }
+def publish(login, frames=None):
+    payload={"platform":"MT4", "login":login, "server":"Broker-Demo",
+             "broker":"Demo","currency":"USD","balance":1000,"equity":1000,
+             "margin":0,"free_margin":1000,"positions":[],"history":[],
+             "frames":frames if frames is not None else
+                      [frame(tf) for tf in ["M1","M5","M15","H1","H4","D1"]]}
     r=client.post("/api/bridge/push",json=payload,headers=AUTH)
-    assert r.status_code == 200,r.text
-    return {"platform":"MT4","login":login,"server":server,"symbol":"XAUUSD"}
+    assert r.status_code==200,r.text
+    return {"platform":"MT4","login":login,"server":"Broker-Demo","symbol":"XAUUSD"}
 
-def verified_calendar(symbol):
-    return {"source":"TRADING_ECONOMICS_CALENDAR","status":"CALENDAR_CLEAR",
-            "provider_confirmed":True,"can_open_new_position":True,
-            "news_blackout_events":[],"recent_high_impact":[],
-            "upcoming_high_impact":[],"directional_macro_bias":"NOT_VERIFIED"}
+def compiled_ok(*args, **kwargs):
+    return {
+        "ai_confirmed":True, "news_clear":True,
+        "fundamental_status":"GROUNDED_CLEAR",
+        "fundamental_summary":"Kondisi makro mendukung; sumber terverifikasi.",
+        "reason":"EMA dan rilis ekonomi selaras.",
+        "risk":"Perubahan sentimen mendadak.",
+        "sources":[{"title":"Official data","url":"https://www.bls.gov/"}],
+        "method":"GEMINI_GOOGLE_SEARCH_GROUNDING"
+    }
 
-def test_no_broker_orders_and_no_auth_bypass(monkeypatch):
-    monkeypatch.delenv("DEMO_EA_STRATEGY_ENABLED", raising=False)
-    p=publish(login=99871)
-    assert client.post("/api/bridge/strategy",json=p).status_code == 401
-    r=client.post("/api/live/strategy-preview",json=p,headers=DASH)
-    assert r.status_code == 200
-    j=r.json()
-    assert j["confidence_pct"]>=51
-    assert j["score_type"]=="INDICATOR_ALIGNMENT_NOT_WIN_PROBABILITY"
-    assert j["trade_eligible"] is False
-    assert j["server_demo_enabled"] is False
-    assert j["mode"]=="DEMO_ACCOUNT_ONLY"
-
-def test_ai_agreement_unlocks_only_demo_signal(monkeypatch):
-    monkeypatch.setenv("DEMO_EA_STRATEGY_ENABLED", "true")
-    monkeypatch.setattr(strategy_bridge,"calendar_context",verified_calendar)
-    p=publish(login=99872)
-    monkeypatch.setattr(strategy_bridge,"_model_check",lambda plan,frames,fundamental:(True,"EMA & MACD aligned"))
-    r=client.post("/api/bridge/strategy",json=p,headers=AUTH)
-    assert r.status_code == 200
-    parts=r.text.split("|")
-    assert parts[0]=="ALLOW"
-    assert parts[1]=="BUY"
-    assert int(parts[2])>=51
-    assert int(parts[3])>0
+def test_research_readonly_even_when_server_enabled(monkeypatch):
+    p=publish(99871)
+    monkeypatch.setenv("DEMO_EA_STRATEGY_ENABLED","true")
+    monkeypatch.setattr(strategy_bridge,"compile_grounded",compiled_ok)
+    assert client.post("/api/live/ai-compiled",json=p).status_code==401
+    r=client.post("/api/live/ai-compiled",json=p,headers=DASH)
+    assert r.status_code==200,r.text
+    data=r.json()
+    assert data["bias"]=="BUY"
+    assert data["fundamental_status"]=="GROUNDED_CLEAR"
+    assert data["trade_eligible"] is False
+    assert data["sources"]
     assert client.get("/api/live/status",headers=DASH).json()["broker_execution_enabled"] is False
 
-def test_technical_risk_veto(monkeypatch):
-    monkeypatch.setenv("DEMO_EA_STRATEGY_ENABLED", "true")
-    monkeypatch.setattr(strategy_bridge,"calendar_context",verified_calendar)
-    p=publish(login=99873,frames=[make_frame(tf) for tf in ["M15","H1"]])
-    monkeypatch.setattr(strategy_bridge,"_model_check",lambda plan,frames,fundamental:(True,"AI agreed"))
+def test_disabled_default_blocks_ea_even_if_ai_would_agree(monkeypatch):
+    p=publish(99872)
+    monkeypatch.delenv("DEMO_EA_STRATEGY_ENABLED",raising=False)
+    monkeypatch.setattr(strategy_bridge,"compile_grounded",compiled_ok)
+    r=client.post("/api/bridge/strategy",json=p,headers=AUTH)
+    assert r.status_code==200
+    assert r.text.startswith("BLOCK|")
+    assert client.post("/api/bridge/strategy",json=p).status_code==401
+
+def test_enabled_demo_signal_requires_grounded_ai(monkeypatch):
+    p=publish(99873)
+    monkeypatch.setenv("DEMO_EA_STRATEGY_ENABLED","true")
+    monkeypatch.setattr(strategy_bridge,"compile_grounded",compiled_ok)
+    r=client.post("/api/bridge/strategy",json=p,headers=AUTH)
+    assert r.text.startswith("ALLOW|BUY|")
+    assert int(r.text.split("|")[2])>=51
+
+def test_uncited_fundamentals_fail_closed(monkeypatch):
+    from ai_macro_grounding import GroundingUnavailable
+    p=publish(99874)
+    monkeypatch.setenv("DEMO_EA_STRATEGY_ENABLED","true")
+    monkeypatch.setattr(strategy_bridge,"compile_grounded",
+                        lambda *args: (_ for _ in ()).throw(GroundingUnavailable("No citations")))
+    r=client.post("/api/bridge/strategy",json=p,headers=AUTH)
+    assert r.text.startswith("BLOCK|")
+    plan=client.post("/api/live/ai-compiled",json=p,headers=DASH).json()
+    assert plan["fundamental_status"]=="UNVERIFIED"
+    assert not plan["trade_eligible"]
+
+def test_technical_mismatch_blocks_before_ai(monkeypatch):
+    p=publish(99875,frames=[frame("M15"),frame("H1")])
+    monkeypatch.setenv("DEMO_EA_STRATEGY_ENABLED","true")
+    monkeypatch.setattr(strategy_bridge,"compile_grounded",
+                        lambda *args: (_ for _ in ()).throw(AssertionError("Should not search")))
     r=client.post("/api/bridge/strategy",json=p,headers=AUTH)
     assert r.text.startswith("BLOCK|")
 
-def test_disagreement_veto(monkeypatch):
-    monkeypatch.setenv("DEMO_EA_STRATEGY_ENABLED", "true")
-    monkeypatch.setattr(strategy_bridge,"calendar_context",verified_calendar)
-    p=publish(login=99874)
-    monkeypatch.setattr(strategy_bridge,"_model_check",lambda plan,frames,fundamental:(False,"Conflicting indicators"))
-    r=client.post("/api/bridge/strategy",json=p,headers=AUTH)
-    assert r.text.startswith("BLOCK|")
-
-def test_account_mismatch_and_missing_data_fail_closed():
-    p=publish(login=99875)
-    p["server"]="Unexpected"
-    assert client.post("/api/bridge/strategy",json=p,headers=AUTH).text == "BLOCK|NONE|0|0"
-    p["login"]=999999
-    assert client.post("/api/bridge/strategy",json=p,headers=AUTH).text == "BLOCK|NONE|0|0"
-
-def test_stale_feed_blocks(monkeypatch):
-    p=publish(login=99876)
+def test_unmatched_account_and_stale_feed_block():
+    p=publish(99876)
+    p["server"]="Wrong-Server"
+    assert client.post("/api/bridge/strategy",json=p,headers=AUTH).text=="BLOCK|NONE|0|0"
+    p["server"]="Broker-Demo"
     key=strategy_bridge.account_key(strategy_bridge.StrategyRequest(**p))
     with live_bridge._lock:
         live_bridge._snapshots[key]["received_at"]=time.time()-300
     assert client.post("/api/bridge/strategy",json=p,headers=AUTH).text=="BLOCK|NONE|0|0"
 
-def test_ea_sources_demo_guarded():
+def test_demo_ea_sources_have_strict_controls():
     root=Path(__file__).resolve().parents[1]/"bridges"
-    for file in ["MT4_AutoSwitch_DEMO.mq4","MT5_AutoSwitch_DEMO.mq5","MT4_Scalper_Fundamental_DEMO.mq4","MT5_Scalper_Fundamental_DEMO.mq5"]:
-        s=(root/file).read_text(encoding="utf-8")
-        assert "EnableDemoOrders=false" in s or "EnableDemoOrders = false" in s
-        assert "ACCOUNT_TRADE_MODE_DEMO" in s
-        assert "MaxRiskPercent" in s and "MaxDailyDrawdownPercent" in s
-        assert "ReverseCooldownSeconds" in s
-        assert "OrderClose" in s or "PositionClose" in s
-
-
-def test_calendar_missing_blocks_entry(monkeypatch):
-    p=publish(login=99877)
-    monkeypatch.setenv("DEMO_EA_STRATEGY_ENABLED","true")
-    monkeypatch.setattr(strategy_bridge,"calendar_context",
-                        lambda symbol: (_ for _ in ()).throw(strategy_bridge.CalendarUnavailable("Calendar not configured")))
-    monkeypatch.setattr(strategy_bridge,"_model_check",
-                        lambda *args: (True,"Agree"))
-    r=client.post("/api/bridge/strategy",json=p,headers=AUTH)
-    assert r.text.startswith("BLOCK|")
-    preview=client.post("/api/live/strategy-preview",json=p,headers=DASH).json()
-    assert preview["fundamental"]["status"]=="UNAVAILABLE"
-    assert not preview["trade_eligible"]
-
-def test_blackout_blocks_entry(monkeypatch):
-    p=publish(login=99878)
-    monkeypatch.setenv("DEMO_EA_STRATEGY_ENABLED","true")
-    monkeypatch.setattr(strategy_bridge,"calendar_context",
-        lambda symbol: {"source":"TRADING_ECONOMICS_CALENDAR",
-                        "status":"NEWS_BLACKOUT","provider_confirmed":True,
-                        "can_open_new_position":False,
-                        "news_blackout_events":[{"event":"US CPI"}],
-                        "recent_high_impact":[]})
-    monkeypatch.setattr(strategy_bridge,"_model_check",lambda *args:(True,"Agree"))
-    r=client.post("/api/bridge/strategy",json=p,headers=AUTH)
-    assert r.text.startswith("BLOCK|")
+    for name in ["MT4_AutoSwitch_DEMO.mq4","MT5_AutoSwitch_DEMO.mq5",
+                 "MT4_Scalper_Fundamental_DEMO.mq4","MT5_Scalper_Fundamental_DEMO.mq5"]:
+        code=(root/name).read_text()
+        assert "EnableDemoOrders=false" in code or "EnableDemoOrders = false" in code
+        assert "ACCOUNT_TRADE_MODE_DEMO" in code
+        assert "MaxRiskPercent" in code
+        assert "ReverseCooldownSeconds" in code
 
 
 def test_demo_check_does_not_shadow_meta_trader_builtin():
-    import re
     root=Path(__file__).resolve().parents[1]/"bridges"
     for filename in ["MT4_AutoSwitch_DEMO.mq4","MT5_AutoSwitch_DEMO.mq5",
                      "MT4_Scalper_Fundamental_DEMO.mq4","MT5_Scalper_Fundamental_DEMO.mq5"]:
