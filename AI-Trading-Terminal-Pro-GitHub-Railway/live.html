@@ -53,9 +53,9 @@ button.full{width:100%}
 <body>
 <div class="header"><div class="top"><div><div class="brand"><span class="brand-mark">◆</span> AI Trading Terminal Pro</div><div class="sub">MT4 / MT5 · Broker native indicators</div></div><span class="chip" id="connection">READ-ONLY</span></div></div>
 <div class="shell">
-<section id="login" class="card center"><h2>Dashboard Access</h2><p class="muted small" style="margin-top:8px">Masukkan kode keamanan 4 angka.</p>
+<section id="login" class="card center"><h2>Dashboard Access</h2><p class="muted small" style="margin-top:8px">Masukkan PIN 4 angka sekali saja. Perangkat ini akan tetap login hingga 30 hari, selama cookie browser tidak dihapus.</p>
 <form id="pin-form"><input type="password" class="pin" id="pin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" minlength="4" autocomplete="off" placeholder="••••" required aria-label="4-digit dashboard PIN"><button class="goldbtn full" type="submit" id="pin-submit">Buka Dashboard</button></form>
-<p id="login-error" class="error" aria-live="polite"></p><p class="muted tiny">PIN khusus monitoring. Bukan password akun broker. Percobaan login dibatasi.</p></section>
+<p id="login-error" class="error" aria-live="polite"></p><p class="muted tiny">PIN hanya untuk monitoring. Jangan gunakan di perangkat bersama. Pilih Log out untuk keluar dari HP ini.</p></section>
 <div id="dashboard" class="hidden">
 <div class="row" style="padding-top:12px"><div class="small muted" id="account-breadcrumb">Account overview</div><button class="ghost small" id="logout">Log out</button></div>
 <nav class="tabs" aria-label="Dashboard sections">
