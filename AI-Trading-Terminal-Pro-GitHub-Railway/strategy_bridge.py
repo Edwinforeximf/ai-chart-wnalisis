@@ -23,7 +23,7 @@ _lock = RLock()
 _cache = {}
 MIN_SCORE = 51  # Indicator alignment, NOT empirical win probability.
 MAX_FRAME_AGE = 120
-CACHE_SECONDS = 300
+CACHE_SECONDS = 3600  # Cache one confirmed AI review for an H1 candle
 
 class StrategyRequest(BaseModel):
     platform: str = Field(pattern="^(MT4|MT5)$")
