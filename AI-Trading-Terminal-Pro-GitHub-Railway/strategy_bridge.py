@@ -17,14 +17,14 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from live_bridge import _age, _get, _indicator_alignment, bridge_access, dashboard_access
-from fundamental_gate import calendar_context, CalendarUnavailable
+from ai_macro_grounding import compile_grounded, GroundingUnavailable
 
 router = APIRouter()
 _lock = RLock()
 _cache = {}
 MIN_SCORE = 51  # Indicator alignment, NOT empirical win probability.
 MAX_FRAME_AGE = 120
-CACHE_SECONDS = 3600  # Cache one confirmed AI review for an H1 candle
+CACHE_SECONDS = 180  # Grounded research refresh; not on every VPS poll
 
 class StrategyRequest(BaseModel):
     platform: str = Field(pattern="^(MT4|MT5)$")
@@ -95,53 +95,7 @@ def signal_from_snapshot(key, symbol):
             "timeframes": list(frames.keys()),
             "score_type": "INDICATOR_ALIGNMENT_NOT_WIN_PROBABILITY"}
 
-def _model_check(plan, frames, fundamental):
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return False, "Gemini is not configured"
-    model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
-    if not re.fullmatch(r"[A-Za-z0-9._-]{3,72}", model):
-        return False, "Invalid Gemini model"
-    # AI veto only; no AI-generated trade sizes or invented statistics.
-    payload_data = {"symbol":plan["symbol"],"proposed_bias":plan["bias"],
-                    "verified_calendar": fundamental,
-                    "indicators":[{
-                        "timeframe":f["timeframe"],
-                        "last_closed_candle":f["candles"][-1],
-                        "indicators":f["indicators"]
-                    } for f in frames]}
-    prompt = (
-        "Anda analis scalping MT4/MT5 dengan konfirmasi kalender fundamental. "
-        "Dilarang membuat berita/data baru. Data verified_calendar berasal dari "
-        "kalender ekonomi, tidak menjamin arah harga. "
-        "Jika teknikal bertentangan, tidak cukup data, atau recent releases berpotensi "
-        "mengubah kondisi namun tidak bisa ditafsirkan, pilih NO_TRADE. "
-        "Jawab JSON dengan decision BUY/SELL/NO_TRADE, fundamental_compatible boolean, "
-        "reason maksimal 18 kata. fundamental_compatible berarti tidak ada risiko "
-        "makro terverifikasi yang bertentangan, BUKAN konfirmasi kenaikan/penurunan harga "
-        "atau probabilitas kemenangan. Jangan membuat angka atau target harga."
-        + json.dumps(payload_data, ensure_ascii=False, separators=(",",":"))
-    )
-
-    body = json.dumps({"contents":[{"parts":[{"text":prompt}]}],
-                       "generationConfig":{"responseMimeType":"application/json",
-                                            "temperature":0.1,
-                                            "maxOutputTokens":140}}).encode()
-    req = urllib.request.Request(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        data=body, method="POST",
-        headers={"Content-Type":"application/json", "x-goog-api-key":api_key})
-    try:
-        with urllib.request.urlopen(req, timeout=20) as r:
-            result = json.load(r)
-        response = json.loads(result["candidates"][0]["content"]["parts"][0]["text"])
-        decision = response["decision"]
-        compatible = response.get("fundamental_compatible") is True
-        return decision == plan["bias"] and compatible, str(response.get("reason",""))[:100]
-    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, KeyError, IndexError, TypeError):
-        return False, "Gemini unavailable / invalid response"
-
-def build_plan(request: StrategyRequest, *, use_ai: bool):
+def build_plan(request: StrategyRequest, *, use_ai: bool, research_only: bool = False):
     key = account_key(request)
     item = _get(key)
     if (item["snapshot"]["platform"] != request.platform
@@ -150,50 +104,65 @@ def build_plan(request: StrategyRequest, *, use_ai: bool):
         raise HTTPException(403, "Account mismatch")
     plan = signal_from_snapshot(key, request.symbol)
     plan["mode"] = "DEMO_ACCOUNT_ONLY"
-    plan["demo_execution_requires_explicit_ea_opt_in"] = True
     plan["trade_eligible"] = False
     plan["ai_checked"] = False
-    plan["server_demo_enabled"] = os.getenv("DEMO_EA_STRATEGY_ENABLED", "").lower() == "true"
+    plan["server_demo_enabled"] = os.getenv("DEMO_EA_STRATEGY_ENABLED","").lower() == "true"
+    plan["fundamental"] = {"status":"NOT_RESEARCHED", "source":"GEMINI_GOOGLE_SEARCH"}
+    plan["fundamental_status"] = "NOT_RESEARCHED"
+    plan["sources"] = []
+    plan["reason"] = "Indikator MT4/MT5 sudah dibaca."
+    plan["risk"] = "Riset fundamental belum dijalankan."
+    plan["setup_status"] = "RESEARCH_ONLY"
     if not plan["server_demo_enabled"]:
-        plan["block_reasons"].append("Railway demo strategy disabled")
-    # Economic calendar gate is mandatory even on DEMO. No provider/key => BLOCK.
-    fundamental = None
-    try:
-        fundamental = calendar_context(request.symbol)
-        plan["fundamental"] = {
-            "status": fundamental["status"], "source": fundamental["source"],
-            "nearby_events": fundamental["news_blackout_events"],
-            "recent_releases": fundamental["recent_high_impact"],
-        }
-        if not fundamental["can_open_new_position"]:
-            plan["block_reasons"].append("Fundamental news blackout")
-    except CalendarUnavailable as exc:
-        plan["fundamental"] = {"status": "UNAVAILABLE", "reason": str(exc)}
-        plan["block_reasons"].append("Verified fundamental calendar unavailable")
-    if plan["block_reasons"] or not use_ai:
+        plan["block_reasons"].append("Railway demo EA strategy disabled")
+    if not use_ai or (not plan["server_demo_enabled"] and not research_only):
+        return plan
+    if not plan["technical_ok"]:
+        plan["fundamental_status"] = "TECHNICAL_BLOCK"
+        plan["risk"] = "Konfirmasi indikator scalping belum lengkap."
         return plan
     now = time.time()
-    # Cache per bar and calendar state; never reuse confirmations across release regimes.
-    recent_ids = tuple(e["event"]+e["date_utc"] for e in fundamental["recent_high_impact"])
-    cache_id = (key, request.symbol, plan["bar"], plan["bias"],
-                fundamental["status"], recent_ids)
+    cache_id = (key, request.symbol, plan["bar"], plan["bias"])
     with _lock:
         cached = _cache.get(cache_id)
-        if cached and now < cached["expires"]:
-            ok, reason = cached["ok"], cached["reason"]
-        else:
-            ok, reason = _model_check(plan, [
-                v["frame"] for v in item["frame_map"].values()
-                if v["frame"]["symbol"] == request.symbol
-                and now-v["received_at"] < MAX_FRAME_AGE], fundamental)
-            _cache[cache_id] = {"ok": ok, "reason": reason,
-                                "expires": now + (CACHE_SECONDS if ok else 120)}
+    if cached and now < cached["expires"]:
+        compiled = cached["result"]
+    else:
+        frames = [
+            v["frame"] for v in item["frame_map"].values()
+            if v["frame"]["symbol"] == request.symbol
+            and now - v["received_at"] < MAX_FRAME_AGE
+        ]
+        try:
+            compiled = compile_grounded(request.symbol, frames, plan["bias"])
+        except GroundingUnavailable as exc:
+            compiled = {
+                "ai_confirmed":False, "news_clear":False,
+                "fundamental_status":"UNVERIFIED",
+                "fundamental_summary":"Fundamental belum dapat diverifikasi.",
+                "reason":"Bias teknikal tersedia; AI belum memverifikasi berita.",
+                "risk":str(exc)[:110], "sources": [],
+                "method":"GEMINI_GOOGLE_SEARCH_GROUNDING"
+            }
+        with _lock:
+            _cache[cache_id] = {"result":compiled, "expires":now + CACHE_SECONDS}
     plan["ai_checked"] = True
-    plan["ai_concurs"] = ok
-    plan["ai_reason"] = reason
-    plan["trade_eligible"] = bool(ok and fundamental["can_open_new_position"])
-    if not ok:
-        plan["block_reasons"].append("AI did not confirm fundamentals and technical bias")
+    plan["fundamental"] = {
+        "status":compiled["fundamental_status"],
+        "source":compiled["method"],
+        "summary":compiled["fundamental_summary"],
+    }
+    plan["fundamental_status"] = compiled["fundamental_status"]
+    plan["fundamental_summary"] = compiled["fundamental_summary"]
+    plan["reason"] = compiled["reason"]
+    plan["risk"] = compiled["risk"]
+    plan["sources"] = compiled["sources"]
+    plan["ai_concurs"] = bool(compiled["ai_confirmed"])
+    if not compiled["ai_confirmed"]:
+        plan["block_reasons"].append("AI fundamental not verified or contradicts technical")
+    plan["trade_eligible"] = (plan["technical_ok"] and plan["ai_concurs"]
+                              and plan["server_demo_enabled"] and not research_only)
+    plan["setup_status"] = "DEMO_ELIGIBLE" if plan["trade_eligible"] else "NO_ENTRY"
     return plan
 
 @router.post("/api/bridge/strategy", dependencies=[Depends(bridge_access)])
@@ -212,3 +181,9 @@ def bridge_strategy(payload: StrategyRequest):
 def strategy_preview(payload: StrategyRequest):
     """Dashboard only: show score, eligibility, reason. Never places orders."""
     return build_plan(payload, use_ai=False)
+
+
+@router.post("/api/live/ai-compiled", dependencies=[Depends(dashboard_access)])
+def ai_compiled_dashboard(payload: StrategyRequest):
+    """AI chart+macro analysis, never an order. Runs with EA kill switch OFF."""
+    return build_plan(payload, use_ai=True, research_only=True)
