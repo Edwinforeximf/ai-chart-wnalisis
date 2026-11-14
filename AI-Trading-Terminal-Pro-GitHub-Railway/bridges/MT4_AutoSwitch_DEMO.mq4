@@ -125,7 +125,8 @@ int OnInit() {
 void OnDeinit(const int reason){EventKillTimer();}
 void OnTick(){/* Timer-based to avoid repeated orders on ticks. */}
 void OnTimer() {
-   if(!Permitted())return;
+   // Always permit evaluation of a protective cut, even when daily new-entry limits are reached.
+   if(!EnableDemoOrders || !IsDemo() || !IsTradeAllowed())return;
    string side="";int score=0;long bar=0;
    if(!GetPlan(side,score,bar))return;
    if(GlobalVariableCheck(Prefix()+"_bar") && (long)GlobalVariableGet(Prefix()+"_bar")==bar)return;
