@@ -117,7 +117,7 @@ def build_plan(request: StrategyRequest, *, use_ai: bool, research_only: bool = 
         plan["block_reasons"].append("Railway demo EA strategy disabled")
     if not use_ai or (not plan["server_demo_enabled"] and not research_only):
         return plan
-    if not plan["technical_ok"]:
+    if not plan["technical_ok"] and not research_only:
         plan["fundamental_status"] = "TECHNICAL_BLOCK"
         plan["risk"] = "Konfirmasi indikator scalping belum lengkap."
         return plan
