@@ -119,3 +119,13 @@ def test_demo_ea_sources_have_strict_controls():
         assert "ACCOUNT_TRADE_MODE_DEMO" in code
         assert "MaxRiskPercent" in code
         assert "ReverseCooldownSeconds" in code
+
+
+def test_demo_check_does_not_shadow_meta_trader_builtin():
+    root=Path(__file__).resolve().parents[1]/"bridges"
+    for filename in ["MT4_AutoSwitch_DEMO.mq4","MT5_AutoSwitch_DEMO.mq5",
+                     "MT4_Scalper_Fundamental_DEMO.mq4","MT5_Scalper_Fundamental_DEMO.mq5"]:
+        source=(root/filename).read_text(encoding="utf-8")
+        assert "IsDemo(" not in source and "IsDemo (" not in source
+        assert "bool IsDemoAccountAI()" in source
+        assert "ACCOUNT_TRADE_MODE_DEMO" in source
