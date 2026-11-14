@@ -156,6 +156,6 @@ def test_demo_check_does_not_shadow_meta_trader_builtin():
     for filename in ["MT4_AutoSwitch_DEMO.mq4","MT5_AutoSwitch_DEMO.mq5",
                      "MT4_Scalper_Fundamental_DEMO.mq4","MT5_Scalper_Fundamental_DEMO.mq5"]:
         source=(root/filename).read_text(encoding="utf-8")
-        assert not re.search(r"\\bIsDemo\\s*\\(", source)
+        assert "IsDemo(" not in source and "IsDemo (" not in source
         assert "bool IsDemoAccountAI()" in source
         assert "ACCOUNT_TRADE_MODE_DEMO" in source
