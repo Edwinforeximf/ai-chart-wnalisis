@@ -85,8 +85,8 @@ Generate tokens locally in a secure password manager; never send login passwords
 
 ## v5 — Mobile dashboard PIN, tabs, concise AI
 
-The \`/live\` dashboard now uses **4-digit dashboard PIN authentication** and an 8-hour
-Secure + HttpOnly + SameSite=Strict cookie. This is *read-only convenience
+The \`/live\` dashboard now uses **4-digit dashboard PIN authentication** and an 30-day
+signed Secure + HttpOnly + SameSite=Strict cookie. This is *read-only convenience
 authentication* — a 4-digit PIN is weaker than a full password or MFA.
 
 ### Required Railway variables for the new login
@@ -99,7 +99,7 @@ authentication* — a 4-digit PIN is weaker than a full password or MFA.
   clients, or omit it if unused. Do not put it in the browser.
 - Use exactly **one Railway web replica** for this MVP because PIN sessions,
   lockout counters and broker snapshots are stored in per-process memory.
-  Restarting Railway logs users out and loses recent snapshots until the next EA push.
+  Restarting Railway loses recent broker snapshots until the next EA push, but signed dashboard cookies remain valid across restarts (while their signing secret stays unchanged).
 
 ### UX changes
 - Four top-level tabs: **Overview, Chart, AI Signal, History**.
@@ -122,3 +122,23 @@ authentication* — a 4-digit PIN is weaker than a full password or MFA.
   per 15 minutes and an additional global cap). Clearing the process resets those
   limits. HTTPS is required for the session cookie.
 - All trading and bulk-close operations are disabled in /live.
+
+
+## v5.1: Login sekali pada HP yang sama
+
+- Users enter the **4-digit DASHBOARD_PIN** only on first visit.
+- The server issues a **30-day HMAC-signed Secure/HttpOnly/SameSite=Strict cookie**.
+- Subsequent visits from the same browser automatically restore the dashboard.
+- Railway redeploys no longer force a PIN re-login, provided the signing secret
+  stays the same.
+- Uses \`DASHBOARD_SESSION_SECRET\` if configured, otherwise the existing
+  \`DASHBOARD_TOKEN\` as signing key (must be a random secret >=24 characters).
+  This key remains ONLY on Railway; it is not typed into the dashboard.
+- Server sets \`Cache-Control: no-store\` on the HTML to prevent stale login UI.
+- Logging out deletes the local browser session. To revoke all sessions, rotate
+  \`DASHBOARD_SESSION_SECRET\` (or \`DASHBOARD_TOKEN\` when using its fallback).
+- A stolen signed cookie remains reusable until expiration or key rotation;
+  do not use this simplified authentication for real order execution.
+- For Chrome mobile if old login appears: open
+  \`https://ai-chart-wnalisis-production.up.railway.app/live?v=51\`.
+- The only newly required setup remains \`DASHBOARD_PIN\` set in Railway Variables.
