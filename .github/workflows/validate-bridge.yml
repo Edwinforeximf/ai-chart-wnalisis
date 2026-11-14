@@ -21,4 +21,4 @@ jobs:
       - name: Compile and test
         run: |
           python -m py_compile app.py live_bridge.py
-          pytest -q tests/test_live_bridge.py
+          pytest -q tests
