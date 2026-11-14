@@ -282,7 +282,7 @@ def _indicator_alignment(frames):
     confidence = round(50 + 40 * min(1, abs(signed) / available))
     return {"bias": bias, "confidence_pct": confidence,
             "score_type": "INDICATOR_ALIGNMENT_NOT_WIN_PROBABILITY",
-            "setup_status": "SETUP_OK" if confidence >= 60 else "LOW_CONFIDENCE_NO_ENTRY"}
+            "setup_status": "SETUP_OK" if confidence >= 51 else "LOW_CONFIDENCE_NO_ENTRY"}
 
 
 @router.post("/api/live/analyze", dependencies=[Depends(dashboard_access)])
