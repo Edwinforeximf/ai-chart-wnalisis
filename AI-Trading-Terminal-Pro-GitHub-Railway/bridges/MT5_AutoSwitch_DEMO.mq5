@@ -23,7 +23,7 @@ int atrHandle=INVALID_HANDLE;
 string Prefix(){return "AI6_"+IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN))+"_"+_Symbol+"_"+IntegerToString(EA_Magic);}
 string Q(string s){StringReplace(s,"\\","\\\\");StringReplace(s,"\"","\\\"");return "\""+s+"\"";}
 string DayKey(){MqlDateTime dt;TimeToStruct(TimeCurrent(),dt);return Prefix()+"_D"+IntegerToString(dt.year*10000+dt.mon*100+dt.day);}
-bool IsDemo(){return AccountInfoInteger(ACCOUNT_TRADE_MODE)==ACCOUNT_TRADE_MODE_DEMO;}
+bool IsDemoAccountAI(){return AccountInfoInteger(ACCOUNT_TRADE_MODE)==ACCOUNT_TRADE_MODE_DEMO;}
 bool RiskBudgetOk() {
    string baseline=DayKey()+"_eq";
    if(!GlobalVariableCheck(baseline))GlobalVariableSet(baseline,AccountInfoDouble(ACCOUNT_EQUITY));
@@ -31,7 +31,7 @@ bool RiskBudgetOk() {
    return first>0 && AccountInfoDouble(ACCOUNT_EQUITY)>=first*(1.0-MaxDailyDrawdownPercent/100.0);
 }
 bool CanTradeNow() {
-   if(!EnableDemoOrders || !IsDemo() || !TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)
+   if(!EnableDemoOrders || !IsDemoAccountAI() || !TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)
       || !MQLInfoInteger(MQL_TRADE_ALLOWED) || !AccountInfoInteger(ACCOUNT_TRADE_ALLOWED))return false;
    if(SymbolInfoInteger(_Symbol,SYMBOL_SPREAD)>MaxSpreadPoints)return false;
    return true;
@@ -126,7 +126,7 @@ bool OpenDemo(string side,long bar) {
    return true;
 }
 int OnInit() {
-   if(!IsDemo()) {Print("DEMO ONLY. No real-account trading.");return INIT_FAILED;}
+   if(!IsDemoAccountAI()) {Print("DEMO ONLY. No real-account trading.");return INIT_FAILED;}
    // On netting accounts manual and EA positions can mix. Only hedging demo supported.
    if(AccountInfoInteger(ACCOUNT_MARGIN_MODE)!=ACCOUNT_MARGIN_MODE_RETAIL_HEDGING) {
       Print("For safety this demo EA requires a hedging account.");return INIT_FAILED;

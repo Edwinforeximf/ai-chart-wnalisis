@@ -22,10 +22,10 @@ input double ATR_TakeMultiplier = 2.0;
 
 string Prefix() {return "AI6_"+IntegerToString(AccountNumber())+"_"+Symbol()+"_"+IntegerToString(EA_Magic);}
 string Q(string s) {StringReplace(s,"\\","\\\\");StringReplace(s,"\"","\\\"");return "\""+s+"\"";}
-bool IsDemo() {return AccountInfoInteger(ACCOUNT_TRADE_MODE)==ACCOUNT_TRADE_MODE_DEMO;}
+bool IsDemoAccountAI() {return AccountInfoInteger(ACCOUNT_TRADE_MODE)==ACCOUNT_TRADE_MODE_DEMO;}
 string DayKey() {datetime t=TimeCurrent();return Prefix()+"_D"+IntegerToString(TimeYear(t)*10000+TimeMonth(t)*100+TimeDay(t));}
 bool Permitted() {
-   if(!EnableDemoOrders || !IsDemo() || !IsTradeAllowed()) return false;
+   if(!EnableDemoOrders || !IsDemoAccountAI() || !IsTradeAllowed()) return false;
    if(MarketInfo(Symbol(),MODE_SPREAD)>MaxSpreadPoints) return false;
    string k=DayKey()+"_eq";
    if(!GlobalVariableCheck(k)) GlobalVariableSet(k,AccountEquity());
@@ -135,7 +135,7 @@ bool GetPlan(string &side,int &score,long &bar) {
 }
 int OnInit() {
    if(StringFind(ApiBase,"https://")!=0 || StringLen(BridgeToken)<24)return INIT_FAILED;
-   if(!IsDemo()){Print("DEMO ONLY EA refuses real accounts.");return INIT_FAILED;}
+   if(!IsDemoAccountAI()){Print("DEMO ONLY EA refuses real accounts.");return INIT_FAILED;}
    if(MaxLot<=0 || RiskPercent<=0 || RiskPercent>MaxRiskPercent || MaxSpreadToStop<=0 || MaxSpreadToStop>0.5 || MaxRiskPercent<=0 || MaxRiskPercent>1 ||
       MaxDailyDrawdownPercent<=0 || MaxDailyDrawdownPercent>3 ||
       MaxNewTradesPerDay<1 || MaxNewTradesPerDay>5 ||
@@ -149,7 +149,7 @@ void OnDeinit(const int reason){EventKillTimer();}
 void OnTick(){/* Timer-based to avoid repeated orders on ticks. */}
 void OnTimer() {
    // Always permit evaluation of a protective cut, even when daily new-entry limits are reached.
-   if(!EnableDemoOrders || !IsDemo() || !IsTradeAllowed())return;
+   if(!EnableDemoOrders || !IsDemoAccountAI() || !IsTradeAllowed())return;
    string side="";int score=0;long bar=0;
    if(!GetPlan(side,score,bar))return;
    if(GlobalVariableCheck(Prefix()+"_bar") && (long)GlobalVariableGet(Prefix()+"_bar")==bar)return;
