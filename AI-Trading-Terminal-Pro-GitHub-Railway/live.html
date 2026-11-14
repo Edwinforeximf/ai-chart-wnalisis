@@ -1,46 +1,143 @@
-<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI Trading Terminal Pro - Live Bridge</title>
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#081328">
+<title>AI Trading Terminal Pro — Live</title>
 <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#081020;color:#edf3ff;font:14px system-ui,sans-serif}header{padding:18px 22px;background:#101d34;border-bottom:1px solid #324158;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}h2{font-size:18px;margin:0}.gold{color:#f0c779}.muted{color:#91a4c3}.good{color:#44d7aa}.bad{color:#f87e8d}.small{font-size:12px}.app{max-width:1600px;margin:auto}.layout{display:grid;grid-template-columns:minmax(0,1.9fr) minmax(300px,.8fr);gap:12px;padding:12px}.pane{background:#111e33;border:1px solid #2b3e58;border-radius:12px;padding:15px;min-width:0;margin-bottom:12px}.row{display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap}.stack{display:flex;gap:8px;flex-wrap:wrap}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.stats b{display:block;font-size:19px;margin-top:7px}.pill{padding:5px 9px;border:1px solid #685b39;border-radius:16px;color:#f0c779}button,input,select{padding:10px;background:#1c2b43;color:#edf3ff;border:1px solid #37506a;border-radius:8px}input{min-width:240px;max-width:100%}button{cursor:pointer}button:hover{background:#304460}button:disabled{opacity:.4;cursor:not-allowed}a{color:#f0c779;text-decoration:none}.alert{padding:11px;background:#392d25;border:1px solid #85613b;border-radius:9px;color:#efd29e;margin:12px 0}.chart{height:380px}h3{margin:0 0 12px;font-size:15px}table{border-collapse:collapse;width:100%;white-space:nowrap}th,td{border-bottom:1px solid #283a55;padding:9px 7px;text-align:left}th{color:#9caec7;font-weight:500}.table-scroll{overflow:auto}.framebtn.active{border-color:#d7ae55;color:#f5d07d}.kv{display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid #263954}.analysis{white-space:pre-wrap;line-height:1.7}.hide{display:none!important}#login-area{padding:16px 12px}.foot{padding:24px;text-align:center;color:#96a6c1}@media(max-width:900px){.layout{display:block}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.chart{height:290px}}
-</style></head><body><div class="app"><header><div><h2><span class="gold">◆</span> AI Trading Terminal Pro <span class="pill small">MT4 / MT5 READ-ONLY</span></h2><div class="muted small">Native indicators · Closed candle data · Gemini AI</div></div><div><a href="/">← Demo Dashboard</a> &nbsp; <span id="connection" class="bad small">NOT CONNECTED</span></div></header>
-<div id="login-area" class="pane"><h3>Secure Dashboard Access</h3><p class="muted">Masukkan DASHBOARD_TOKEN dari Railway Variables. Ini bukan password broker; token hanya disimpan di memori browser untuk sesi halaman ini.</p><div class="stack"><input type="password" autocomplete="off" id="token" placeholder="Dashboard access token"><button id="connect">Connect to Railway</button></div><p id="login-error" class="bad small"></p><div class="alert">Jangan masukkan login/password trading. Broker login hanya pada terminal MT4/MT5 di VPS Anda.</div></div>
-<div id="dashboard" class="hide"><div class="layout"><main>
-<div class="pane"><div class="row"><h3>Connected Account</h3><div class="stack"><select id="account"></select><select id="symbol"></select><button id="refresh">Refresh</button></div></div><p class="small muted" id="account-meta">—</p><div class="stats"><div class="pane"><span class="muted small">Balance</span><b id="balance">—</b></div><div class="pane"><span class="muted small">Equity</span><b id="equity">—</b></div><div class="pane"><span class="muted small">Floating P/L</span><b id="floating">—</b></div><div class="pane"><span class="muted small">Free Margin</span><b id="margin">—</b></div></div></div>
-<div class="pane"><div class="row"><h3 id="chartname">Live Broker Chart</h3><div class="stack" id="frames"></div></div><div id="chart" class="chart"></div><p class="small muted">Candles tertutup dikirim oleh EA. Tidak menampilkan tick stream atau harga eksekusi yang dijamin.</p></div>
-<div class="pane"><div class="row"><h3>Open Positions</h3><span class="small muted">Monitoring only; no close orders</span></div><div class="table-scroll"><table><thead><tr><th>Ticket</th><th>Symbol</th><th>Side</th><th>Lot</th><th>P/L</th></tr></thead><tbody id="positions"></tbody></table></div></div>
-<div class="pane"><h3>Broker Trading History (latest reported records)</h3><div class="table-scroll"><table><thead><tr><th>Ticket / Deal</th><th>Symbol</th><th>Side</th><th>Volume</th><th>Realized P/L</th></tr></thead><tbody id="history"></tbody></table></div></div>
-</main><aside>
-<div class="pane"><h3>Native MT4/MT5 Indicators</h3><div id="indicators" class="small">Waiting for data.</div><p class="small muted">EMA20/50/200, RSI14, MACD, ADX14, ATR14, Bollinger 20/2. Closed bar shift=1.</p></div>
-<div class="pane"><h3>AI Technical Analyst</h3><p class="muted small">Analisis data native indikator dengan Gemini, bukan harga sintetis. Fundamental/news feed belum terhubung.</p><button id="analyze">Analyze Broker Data with AI</button><p id="ai-status" class="small muted"></p><div id="ai-report" class="analysis"></div><div class="alert">NO AUTO ENTRY: hasil analisis tidak memicu order. Konfirmasi manual pada terminal broker tetap diperlukan.</div></div>
-<div class="pane"><h3>Gateway Status</h3><div id="status" class="small muted">Waiting for connection.</div><p class="small muted">Read-only bridge: data ke Railway; tidak ada command eksekusi order ke MT4/MT5.</p></div>
-</aside></div></div><div class="foot small">Data akun hanya tersedia setelah autentikasi. Koneksi ke VPS dan Gemini API memerlukan konfigurasi sendiri.</div></div>
+:root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:#edf3ff;background:#081328;font-size:14px}
+*{box-sizing:border-box}body{margin:0}button,select,input{font:inherit}button{cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}
+.shell{max-width:1160px;margin:auto;padding:0 14px 24px}
+.header{background:#0e1d33;border-bottom:1px solid #293c56}.top{max-width:1160px;margin:auto;padding:16px 14px;display:flex;justify-content:space-between;align-items:center;gap:12px}
+.brand{font-size:17px;font-weight:800;letter-spacing:-.3px}.brand-mark{color:#edc373}.sub{color:#93a5bf;font-size:11px;margin-top:3px}
+.chip{display:inline-flex;align-items:center;gap:5px;border-radius:15px;border:1px solid #3a4c67;font-size:10px;color:#aab9cc;padding:5px 9px;white-space:nowrap}
+.chip.good{border-color:#256d62;color:#56d9b7}.chip.bad{border-color:#774456;color:#ff8fa5}
+.muted{color:#91a4c0}.tiny{font-size:11px}.small{font-size:12px}
+.card{background:#101f35;border:1px solid #293d58;border-radius:13px;padding:17px;margin-top:13px;min-width:0}
+h2,h3,p{margin:0}h2{font-size:17px}h3{font-size:14px;font-weight:700}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.stack{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+select,button,input{border:1px solid #344e70;background:#1b2e4b;color:#eaf1fd;padding:11px 12px;border-radius:9px;outline:none;max-width:100%}
+select:focus,button:focus-visible,input:focus{border-color:#d3ac60;box-shadow:0 0 0 2px #d3ac6033}
+button:hover{filter:brightness(1.14)}.goldbtn{background:#c99e4e;color:#09162a;font-weight:750;border-color:#dbb56c}
+.ghost{background:transparent}.danger{color:#f994a6}.positive{color:#51ddb4}
+.tabs{position:sticky;top:0;z-index:4;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;background:#081328;padding:10px 0 7px}
+.tab{padding:11px 4px;font-size:12px;border:1px solid #283d58;border-radius:10px;background:#112039;color:#b2c1d6}
+.tab.active{border-color:#c9a361;background:#2b2b32;color:#f0cc87;font-weight:750}
+.view{display:none}.view.active{display:block}
+.statusline{padding:11px 2px;color:#94a8c2;font-size:12px;line-height:1.6}
+.label{color:#92a6c1;font-size:11px}.account{width:100%;margin:12px 0 2px}
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:14px}
+.metric{padding:13px;background:#0d1a2f;border:1px solid #263c58;border-radius:12px;min-width:0}
+.metric strong{display:block;font-size:clamp(16px,3.8vw,24px);margin-top:9px;overflow-wrap:anywhere;font-weight:700}
+.metrics-foot{display:flex;gap:9px;flex-wrap:wrap;margin-top:12px;color:#90a3bf;font-size:11px}
+.table-scroll{overflow-x:auto;max-height:285px;overflow-y:auto}table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{padding:11px 8px;border-bottom:1px solid #283d57;text-align:left;font-size:12px}th{color:#8ea3c2;font-size:11px;font-weight:550}td:last-child,th:last-child{text-align:right}
+.chart{width:100%;height:420px;margin-top:10px}
+.frames{display:flex;gap:6px;overflow-x:auto;padding:10px 0 5px;scrollbar-width:thin}
+.frames button{padding:8px 10px;min-width:45px;font-size:12px}
+.frames button.active{border-color:#d0a857;color:#f6cc7d;background:#30313a}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid #243952;font-size:12px}.kv b{font-variant-numeric:tabular-nums}
+.ind-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 12px}
+.signal{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin:12px 0;padding:17px;background:#0b1b30;border:1px solid #30425e;border-radius:12px}
+.bias{font-size:32px;font-weight:900;letter-spacing:-1px}.confidence{font-size:29px;font-weight:850;font-variant-numeric:tabular-nums;text-align:right}.progress{height:7px;border-radius:9px;background:#283a51;overflow:hidden;margin-bottom:12px}.progress>div{height:100%;background:linear-gradient(90deg,#bc9557,#f3c772);width:0;transition:width .3s}
+.aibrief{line-height:1.6;font-size:13px}.aibrief p{margin:8px 0}.notice{border:1px solid #6d5538;background:#302a26;color:#e7c68f;padding:10px 12px;border-radius:9px;font-size:11px;line-height:1.5;margin-top:12px}
+.center{max-width:430px;margin:9vh auto 0}.center h2{font-size:22px}.pin{font-size:29px;letter-spacing:18px;text-align:center;width:100%;margin:18px 0 12px;padding:18px 8px;font-weight:700}
+.pin::placeholder{color:#596a82;letter-spacing:6px}.error{color:#ff8d9b;font-size:12px;min-height:18px}
+button.full{width:100%}
+.controls{display:flex;gap:8px;align-items:center}.controls button{flex:1}
+.hidden{display:none!important}.footer{text-align:center;color:#7289a6;font-size:11px;padding:22px}
+@media(max-width:600px){.top{align-items:flex-start}.brand{font-size:15px}.chip{font-size:9px}.shell{padding:0 11px 18px}.card{padding:14px;border-radius:12px}.stats{gap:8px}.metric{padding:12px}.chart{height:305px}.ind-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.tab{font-size:11px}.confidence{font-size:26px}}
+</style>
+</head>
+<body>
+<div class="header"><div class="top"><div><div class="brand"><span class="brand-mark">◆</span> AI Trading Terminal Pro</div><div class="sub">MT4 / MT5 · Broker native indicators</div></div><span class="chip" id="connection">READ-ONLY</span></div></div>
+<div class="shell">
+<section id="login" class="card center"><h2>Dashboard Access</h2><p class="muted small" style="margin-top:8px">Masukkan kode keamanan 4 angka.</p>
+<form id="pin-form"><input type="password" class="pin" id="pin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" minlength="4" autocomplete="off" placeholder="••••" required aria-label="4-digit dashboard PIN"><button class="goldbtn full" type="submit" id="pin-submit">Buka Dashboard</button></form>
+<p id="login-error" class="error" aria-live="polite"></p><p class="muted tiny">PIN khusus monitoring. Bukan password akun broker. Percobaan login dibatasi.</p></section>
+<div id="dashboard" class="hidden">
+<div class="row" style="padding-top:12px"><div class="small muted" id="account-breadcrumb">Account overview</div><button class="ghost small" id="logout">Log out</button></div>
+<nav class="tabs" aria-label="Dashboard sections">
+<button class="tab active" data-tab="overview">Overview</button><button class="tab" data-tab="chart">Chart</button><button class="tab" data-tab="ai">AI Signal</button><button class="tab" data-tab="history">History</button></nav>
+<div class="statusline" id="status">Waiting for EA connection...</div>
+<section class="view active" id="overview">
+<div class="card"><div class="row"><h2>Trading Account</h2><span class="chip" id="feed">OFFLINE</span></div>
+<select class="account" id="account" aria-label="Select connected broker account"></select>
+<p class="muted tiny" id="account-info" style="margin-top:6px">—</p>
+<div class="stats"><div class="metric"><span class="label">Balance</span><strong id="balance">—</strong></div><div class="metric"><span class="label">Equity</span><strong id="equity">—</strong></div><div class="metric"><span class="label">Floating P/L</span><strong id="floating">—</strong></div><div class="metric"><span class="label">Free Margin</span><strong id="free">—</strong></div></div>
+<div class="metrics-foot"><span id="used-margin">Used Margin: —</span><span>·</span><span id="pos-count">Open positions: —</span></div></div>
+<div class="card"><div class="row"><h3>Open Positions</h3><span class="chip">MONITOR ONLY</span></div><div class="table-scroll"><table><thead><tr><th>Ticket</th><th>Symbol</th><th>Side</th><th>Lot</th><th>Floating P/L</th></tr></thead><tbody id="positions"></tbody></table></div></div></section>
+<section class="view" id="chart">
+<div class="card"><div class="row"><h2>Live Broker Chart</h2><select id="symbol" aria-label="Chart symbol"></select></div><div id="frames" class="frames"></div><div id="chart-canvas" class="chart"></div><p class="muted tiny">Data dari candle yang sudah ditutup, bukan streaming tick.</p></div>
+<div class="card"><div class="row"><h3>Native Indicators</h3><span class="chip" id="indicator-tf">—</span></div><div class="ind-grid" id="indicators"></div></div></section>
+<section class="view" id="ai">
+<div class="card"><div class="row"><h2>AI Technical Signal</h2><span class="chip">GEMINI</span></div><p class="muted small" style="margin:8px 0 12px">AI membaca indikator dari akun MT4/MT5 yang terhubung.</p>
+<button id="analyze" class="goldbtn full">Analyze Current Symbol</button><div id="signal-content" class="hidden">
+<div class="signal"><div><div class="muted tiny" id="signal-symbol">XAUUSD</div><div class="bias" id="signal-bias">—</div></div><div><div class="muted tiny" style="text-align:right">Confidence</div><div id="signal-confidence" class="confidence">—</div></div></div>
+<div class="progress"><div id="confidence-bar"></div></div><div class="row"><span class="chip" id="signal-setup">—</span><span class="tiny muted" id="signal-source">—</span></div>
+<div class="aibrief"><p id="signal-reason">—</p><p class="muted small" id="signal-risk"></p></div></div>
+<p class="muted small" id="ai-empty" style="margin:14px 0">Pilih instrumen di tab Chart, lalu tekan Analyze.</p><p id="ai-error" class="error" aria-live="polite"></p>
+<div class="notice">Confidence adalah skor keselarasan indikator (bukan peluang profit). Fundamental belum terhubung. Tidak ada order otomatis; sinyal di bawah 60% hanya bias, bukan setup entry.</div></div></section>
+<section class="view" id="history">
+<div class="card"><div class="row"><h2>Trading History</h2><span class="chip" id="history-count">0 records</span></div><p class="muted tiny" style="margin:8px 0 12px">Riwayat terbaru yang dikirim terminal. Maksimal 5 baris per halaman.</p>
+<div class="table-scroll" style="max-height:none"><table><thead><tr><th>Ticket</th><th>Symbol</th><th>Side</th><th>Lot</th><th>Realized P/L</th></tr></thead><tbody id="history-body"></tbody></table></div>
+<div class="row" style="margin-top:13px"><span class="small muted" id="page-info">—</span><div class="controls"><button id="prev" type="button">Prev</button><button id="next" type="button">Next</button></div></div></div></section>
+<div class="footer">READ-ONLY · No auto-entry, no Close All, no live fundamental feed.</div>
+</div></div>
 <script>
 "use strict";
-const $=id=>document.getElementById(id);
-let token="",accounts=[],selected="",symbol="",tf="H1",snap=null,chart=null,candles=null,busy=false;
-const money=x=>Number(x||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-async function call(path,options={}){const r=await fetch(path,{...options,headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json",...(options.headers||{})}});const data=await r.json().catch(()=>({detail:"Invalid server response"}));if(!r.ok)throw Error(data.detail||("HTTP "+r.status));return data;}
-function status(message,bad=false){$("status").textContent=message;$("status").className=bad?"small bad":"small muted";}
-function fillSelect(id,list,key,label,selectedValue){const e=$(id);e.replaceChildren();list.forEach(x=>{let op=document.createElement("option");op.value=key(x);op.textContent=label(x);e.appendChild(op);});if(selectedValue&&[...e.options].some(x=>x.value===selectedValue))e.value=selectedValue;}
-function rows(id,list,keys){const body=$(id);body.replaceChildren();if(!list.length){const tr=body.insertRow();const td=tr.insertCell();td.colSpan=keys.length;td.textContent="No records reported";td.className="muted";return;}list.slice(0,50).forEach(item=>{const tr=body.insertRow();keys.forEach(k=>{const td=tr.insertCell();td.textContent=k==="volume"?money(item[k]):k==="profit"?money(item[k]):String(item[k]??"—");if(k==="profit")td.className=Number(item[k])>=0?"good":"bad";});});}
-function drawFrame(){if(!snap)return;const f=snap.frames.find(x=>x.timeframe===tf&&x.symbol===symbol);if(!f){$("chartname").textContent="No data for "+symbol+" "+tf;return;}
-$("chartname").textContent=symbol+" · "+tf+" · "+snap.platform;
-$("frames").replaceChildren();const available=snap.frames.filter(x=>x.symbol===symbol);available.forEach(x=>{const b=document.createElement("button");b.textContent=x.timeframe;b.className="framebtn"+(tf===x.timeframe?" active":"");b.onclick=()=>{tf=x.timeframe;drawFrame();};$("frames").appendChild(b);});
-$("indicators").replaceChildren();Object.entries(f.indicators).forEach(([k,v])=>{const line=document.createElement("div");line.className="kv";const n=document.createElement("span");n.textContent=k;const val=document.createElement("b");val.textContent=v==null?"—":Number(v).toFixed(5);line.append(n,val);$("indicators").appendChild(line);});
-if(window.LightweightCharts){if(!chart){chart=LightweightCharts.createChart($("chart"),{width:$("chart").clientWidth,height:$("chart").clientHeight,layout:{background:{color:"#111e33"},textColor:"#afc1da"},grid:{vertLines:{color:"#26364d"},horzLines:{color:"#26364d"}}});candles=chart.addCandlestickSeries({upColor:"#39d0a4",downColor:"#ef7890",borderVisible:false,wickUpColor:"#39d0a4",wickDownColor:"#ef7890"});window.addEventListener("resize",()=>chart.applyOptions({width:$("chart").clientWidth,height:$("chart").clientHeight}));}candles.setData(f.candles);chart.timeScale().fitContent();}else{$("chart").textContent="Chart library unavailable";}
+const $=id=>document.getElementById(id), order=["M1","M5","M15","M30","H1","H4","D1","W1","MN1"];
+let accounts=[],selected="",symbol="",tf="H1",snapshot=null,chart=null,candles=null,page=0,tab="overview",active=false,loading=false,requestId=0;
+const money=n=>Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+async function api(url,opts={}){const res=await fetch(url,{credentials:"same-origin",cache:"no-store",...opts,headers:{"Content-Type":"application/json",...(opts.headers||{})}});let out=await res.json().catch(()=>({detail:"Invalid server response"}));if(!res.ok)throw Error(out.detail||("HTTP "+res.status));return out;}
+function setError(s){$("login-error").textContent=s;}
+function setStatus(s){$("status").textContent=s;}
+function selectOptions(id,items,value,label,preferred){$(id).replaceChildren();for(const item of items){const o=document.createElement("option");o.value=value(item);o.textContent=label(item);$(id).append(o);}if(preferred && [...$(id).options].some(o=>o.value===preferred))$(id).value=preferred;}
+function table(id,items,cols){const tbody=$(id);tbody.replaceChildren();if(!items.length){const tr=tbody.insertRow();let cell=tr.insertCell();cell.colSpan=cols.length;cell.textContent="Tidak ada data transaksi";cell.className="muted";return;}for(const x of items){const tr=tbody.insertRow();for(const key of cols){const td=tr.insertCell();td.textContent=key==="volume"?Number(x[key]||0).toFixed(2):key==="profit"?money(x[key]):String(x[key]??"—");if(key==="profit")td.className=Number(x[key])<0?"danger":"positive";}}}
+function showTab(name){tab=name;document.querySelectorAll("[data-tab]").forEach(b=>b.classList.toggle("active",b.dataset.tab===name));document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.id===name));if(name==="chart")requestAnimationFrame(drawFrame);if(name==="history")renderHistory();}
+document.querySelectorAll("[data-tab]").forEach(btn=>btn.onclick=()=>showTab(btn.dataset.tab));
+function renderHistory(){const h=(snapshot?.history||[]).slice().sort((a,b)=>(b.closed_at||0)-(a.closed_at||0)),pages=Math.max(1,Math.ceil(h.length/5));page=Math.min(page,pages-1);const chunk=h.slice(page*5,page*5+5);table("history-body",chunk,["ticket","symbol","side","volume","profit"]);$("history-count").textContent=h.length+" records";$("page-info").textContent=(page+1)+" / "+pages;$("prev").disabled=page===0;$("next").disabled=page>=pages-1;}
+$("prev").onclick=()=>{page=Math.max(0,page-1);renderHistory();};
+$("next").onclick=()=>{page++;renderHistory();};
+function showSnapshot(){if(!snapshot)return;const s=snapshot;
+$("account-info").textContent=s.platform+" · "+s.broker+" · "+s.server+" · #"+s.login;
+$("account-breadcrumb").textContent=s.platform+" · "+s.broker;
+$("balance").textContent=money(s.balance)+" "+s.currency;
+$("equity").textContent=money(s.equity)+" "+s.currency;
+$("floating").textContent=money(s.equity-s.balance)+" "+s.currency;
+$("floating").className=(s.equity-s.balance)<0?"danger":"positive";
+$("free").textContent=money(s.free_margin)+" "+s.currency;
+$("used-margin").textContent="Used Margin: "+money(s.margin);
+$("pos-count").textContent="Open positions: "+s.positions.length;
+$("feed").textContent=s.fresh?"FEED FRESH":"FEED STALE";
+$("feed").className="chip "+(s.fresh?"good":"bad");
+$("connection").textContent=s.fresh?"BROKER FEED":"STALE DATA";
+$("connection").className="chip "+(s.fresh?"good":"bad");
+setStatus("Last EA update: "+s.age_seconds+"s ago · "+(s.fresh?"CONNECTED":"STALE")+" · READ-ONLY");
+table("positions",s.positions,["ticket","symbol","side","volume","profit"]);
+const symbols=[...new Set(s.frames.map(f=>f.symbol))].sort();
+if(!symbols.includes(symbol))symbol=symbols[0]||"";
+selectOptions("symbol",symbols,x=>x,x=>x,symbol);
+if(!s.frames.some(f=>f.symbol===symbol&&f.timeframe===tf))tf=s.frames.find(f=>f.symbol===symbol)?.timeframe||"H1";
+renderHistory();if(tab==="chart")drawFrame();$("analyze").disabled=!s.fresh||!symbol;
 }
-function show(){if(!snap)return;$("balance").textContent=money(snap.balance)+" "+snap.currency;$("equity").textContent=money(snap.equity)+" "+snap.currency;$("margin").textContent=money(snap.free_margin)+" "+snap.currency;const p=snap.equity-snap.balance;$("floating").textContent=money(p)+" "+snap.currency;$("floating").className=p<0?"bad":"good";$("account-meta").textContent=snap.platform+" · "+snap.broker+" · "+snap.server+" · #"+snap.login;
-let symbols=[...new Set(snap.frames.map(f=>f.symbol))];if(!symbols.includes(symbol))symbol=symbols[0];fillSelect("symbol",symbols,x=>x,x=>x,symbol);if(!snap.frames.some(x=>x.symbol===symbol&&x.timeframe===tf))tf=snap.frames.find(x=>x.symbol===symbol)?.timeframe||"H1";
-rows("positions",snap.positions,["ticket","symbol","side","volume","profit"]);rows("history",snap.history,["ticket","symbol","side","volume","profit"]);drawFrame();
-let fresh=snap.fresh;$("connection").textContent=fresh?"BROKER FEED CONNECTED":"STALE FEED";$("connection").className=fresh?"good small":"bad small";status("Last EA snapshot "+snap.age_seconds+"s ago · "+(fresh?"FRESH":"STALE")+" · Execution DISABLED");$("analyze").disabled=!fresh;
+function drawFrame(){if(!snapshot||tab!=="chart")return;const available=snapshot.frames.filter(f=>f.symbol===symbol).sort((a,b)=>order.indexOf(a.timeframe)-order.indexOf(b.timeframe));const container=$("frames");container.replaceChildren();for(const f of available){let b=document.createElement("button");b.textContent=f.timeframe;b.className=f.timeframe===tf?"active":"";b.onclick=()=>{tf=f.timeframe;drawFrame();};container.append(b);}const frame=available.find(f=>f.timeframe===tf);if(!frame)return;
+$("indicator-tf").textContent=symbol+" · "+tf;
+$("indicators").replaceChildren();for(const [key,value] of Object.entries(frame.indicators)){const r=document.createElement("div");r.className="kv";const label=document.createElement("span");label.textContent=key.toUpperCase().replaceAll("_"," ");const val=document.createElement("b");val.textContent=value==null?"—":Number(value).toFixed(key.includes("rsi")||key.includes("adx")?2:5);r.append(label,val);$("indicators").append(r);}
+const box=$("chart-canvas");if(!window.LightweightCharts){box.textContent="Chart library unavailable";return;}
+if(!chart){chart=LightweightCharts.createChart(box,{width:box.clientWidth,height:box.clientHeight,layout:{background:{color:"#101f35"},textColor:"#9bacc5"},grid:{vertLines:{color:"#273951"},horzLines:{color:"#273951"}}});candles=chart.addCandlestickSeries({upColor:"#43d5ab",downColor:"#ed7b94",borderVisible:false,wickUpColor:"#43d5ab",wickDownColor:"#ed7b94"});window.addEventListener("resize",()=>{if(chart)chart.applyOptions({width:box.clientWidth,height:box.clientHeight});});}
+chart.applyOptions({width:box.clientWidth,height:box.clientHeight});candles.setData(frame.candles);chart.timeScale().fitContent();
 }
-async function refreshAccounts(){const res=await call("/api/live/accounts");accounts=res.accounts;fillSelect("account",accounts,x=>x.account_key,x=>x.platform+" · "+x.broker+" · #"+x.login,selected);if(!accounts.length){$("dashboard").classList.remove("hide");$("connection").textContent="NO EA CONNECTED";status("No EA data yet. Install MT4/MT5 EA on VPS, allow WebRequest, and configure BRIDGE_TOKEN.");return;}selected=$("account").value;await loadSnapshot();}
-async function loadSnapshot(){if(!selected||busy)return;busy=true;try{snap=await call("/api/live/snapshot/"+encodeURIComponent(selected));show();}finally{busy=false;}}
-$("connect").onclick=async()=>{token=$("token").value.trim();$("login-error").textContent="";try{await call("/api/live/status");$("login-area").classList.add("hide");$("dashboard").classList.remove("hide");$("token").value="";await refreshAccounts();}catch(e){$("login-error").textContent=e.message;token="";}};
-$("refresh").onclick=()=>refreshAccounts().catch(e=>status(e.message,true));
-$("account").onchange=()=>{selected=$("account").value;symbol="";tf="H1";loadSnapshot().catch(e=>status(e.message,true));};
-$("symbol").onchange=()=>{symbol=$("symbol").value;tf="H1";show();};
-$("analyze").onclick=async()=>{if(!snap||!snap.fresh)return;$("ai-status").textContent="Analyzing native terminal indicator snapshots...";$("ai-report").textContent="";try{const r=await call("/api/live/analyze",{method:"POST",body:JSON.stringify({account_key:selected,symbol})});const a=r.analysis;$("ai-status").textContent="AI "+r.model+" · READ-ONLY · Fundamental "+a.fundamental_status;$("ai-report").textContent="Decision: "+a.decision+"\n\n"+a.summary+"\n\nEvidence:\n"+(a.evidence||[]).map(x=>"• "+x).join("\n")+"\n\nRisks:\n"+(a.risks||[]).map(x=>"• "+x).join("\n")+"\n\n"+(a.disclaimer||"No orders placed");}catch(e){$("ai-status").textContent="AI error: "+e.message;}};
-setInterval(()=>{if(token&&selected)refreshAccounts().catch(e=>status(e.message,true));},20000);
-</script></body></html>
+async function refreshAccounts(){if(!active || loading)return;loading=true;try{const res=await api("/api/live/accounts");accounts=res.accounts;if(!accounts.length){setStatus("Belum ada EA mengirim data. Periksa VPS dan BRIDGE_TOKEN.");return;}
+selectOptions("account",accounts,x=>x.account_key,x=>x.platform+" · "+x.broker+" · #"+x.login,selected);selected=$("account").value;const id=++requestId;const data=await api("/api/live/snapshot/"+encodeURIComponent(selected));if(id!==requestId)return;snapshot=data;showSnapshot();}finally{loading=false;}}
+$("account").onchange=()=>{selected=$("account").value;symbol="";tf="H1";page=0;requestId++;snapshot=null;refreshAccounts().catch(e=>setStatus(e.message));};
+$("symbol").onchange=()=>{symbol=$("symbol").value;tf="H1";$("signal-content").classList.add("hidden");$("ai-empty").classList.remove("hidden");drawFrame();};
+$("analyze").onclick=async()=>{if(!snapshot||!snapshot.fresh)return;const btn=$("analyze");btn.disabled=true;btn.textContent="AI analyzing...";$("ai-error").textContent="";try{const data=await api("/api/live/analyze",{method:"POST",body:JSON.stringify({account_key:selected,symbol})});$("signal-content").classList.remove("hidden");$("ai-empty").classList.add("hidden");$("signal-symbol").textContent=data.symbol+" · Native Technical";$("signal-bias").textContent=data.bias;$("signal-bias").className="bias "+(data.bias==="BUY"?"positive":"danger");$("signal-confidence").textContent=data.confidence_pct+"%";$("confidence-bar").style.width=data.confidence_pct+"%";$("signal-setup").textContent=data.setup_status==="SETUP_OK"?"Indicator aligned":"Low alignment · No entry";$("signal-source").textContent="Not win probability";$("signal-reason").textContent=data.reason;$("signal-risk").textContent="Risk: "+data.risk;}catch(e){$("ai-error").textContent=e.message;}finally{btn.textContent="Analyze Current Symbol";btn.disabled=!(snapshot&&snapshot.fresh);}};
+$("pin-form").onsubmit=async e=>{e.preventDefault();const pin=$("pin").value;const btn=$("pin-submit");btn.disabled=true;setError("");try{await api("/api/live/login",{method:"POST",body:JSON.stringify({pin})});$("pin").value="";await start();}catch(err){setError(err.message);}finally{btn.disabled=false;}};
+async function start(){await api("/api/live/session");active=true;$("login").classList.add("hidden");$("dashboard").classList.remove("hidden");try{await refreshAccounts();}catch(e){setStatus(e.message);}showTab("overview");}
+$("logout").onclick=async()=>{active=false;try{await api("/api/live/logout",{method:"POST"});}finally{location.reload();}};
+(async()=>{try{await start();}catch(e){active=false;$("login").classList.remove("hidden");$("dashboard").classList.add("hidden");}})();
+setInterval(()=>{if(active)refreshAccounts().catch(e=>{setStatus(e.message);if(e.message.includes("PIN"))location.reload();});},20000);
+</script>
+</body></html>
