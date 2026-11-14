@@ -20,5 +20,5 @@ jobs:
           pip install -r requirements.txt pytest httpx
       - name: Compile and test
         run: |
-          python -m py_compile app.py live_bridge.py
+          python -m py_compile app.py live_bridge.py strategy_bridge.py fundamental_gate.py
           pytest -q tests

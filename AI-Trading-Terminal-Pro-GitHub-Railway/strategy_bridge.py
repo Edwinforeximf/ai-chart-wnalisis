@@ -17,6 +17,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from live_bridge import _age, _get, _indicator_alignment, bridge_access, dashboard_access
+from fundamental_gate import calendar_context, CalendarUnavailable
 
 router = APIRouter()
 _lock = RLock()
@@ -48,41 +49,53 @@ def tf_direction(frame):
     return "BUY" if vote >= 2 else "SELL" if vote <= -2 else None
 
 def signal_from_snapshot(key, symbol):
+    """M5 scalp entry, M1 trigger and M15/H1 higher-timeframe trend filters."""
     item = _get(key)
     if _age(item) > MAX_FRAME_AGE:
         raise HTTPException(409, "Broker snapshot stale")
     now = time.time()
     frames = {v["frame"]["timeframe"]: v["frame"]
               for v in item["frame_map"].values()
-              if v["frame"]["symbol"] == symbol and now - v["received_at"] <= MAX_FRAME_AGE}
+              if v["frame"]["symbol"] == symbol and now-v["received_at"] <= MAX_FRAME_AGE}
     if not frames:
         raise HTTPException(409, "No fresh candles for symbol")
-    # The dashboard may still show BUY/SELL bias even if no entry is justified.
     score = _indicator_alignment(list(frames.values()))
-    h1, h4, m15 = (frames.get(tf) for tf in ("H1", "H4", "M15"))
-    bar = int(h1["candles"][-1]["time"]) if h1 else 0
+    required = ("M1", "M5", "M15", "H1")
     risk_reasons = []
-    if not (h1 and h4 and m15):
-        risk_reasons.append("M15/H1/H4 data incomplete")
-    if h1 and h4:
-        for tf, f in (("H1", h1), ("H4", h4)):
-            if tf_direction(f) != score["bias"]:
-                risk_reasons.append(f"{tf} not aligned")
-        adx = h1["indicators"].get("adx14")
-        atr = h1["indicators"].get("atr14")
-        if adx is None or adx < 18:
-            risk_reasons.append("H1 ADX < 18 / unavailable")
+    if any(tf not in frames for tf in required):
+        risk_reasons.append("M1/M5/M15/H1 candles required")
+    # A trigger bar is only allowed once per closed M5 bar.
+    bar = int(frames["M5"]["candles"][-1]["time"]) if "M5" in frames else 0
+    if all(tf in frames for tf in required):
+        for tf in ("M1", "M5", "M15", "H1"):
+            if tf_direction(frames[tf]) != score["bias"]:
+                risk_reasons.append(f"{tf} direction not aligned")
+        i15 = frames["M15"]["indicators"]
+        i5 = frames["M5"]["indicators"]
+        adx = i15.get("adx14")
+        atr = i5.get("atr14")
+        rsi = i5.get("rsi14")
+        if adx is None or adx < 20:
+            risk_reasons.append("M15 ADX below 20 or missing")
         if atr is None or atr <= 0:
-            risk_reasons.append("H1 ATR missing")
+            risk_reasons.append("M5 ATR missing")
+        if rsi is None:
+            risk_reasons.append("M5 RSI missing")
+        elif score["bias"] == "BUY" and not 52 <= rsi <= 72:
+            risk_reasons.append("BUY requires M5 RSI 52-72")
+        elif score["bias"] == "SELL" and not 28 <= rsi <= 48:
+            risk_reasons.append("SELL requires M5 RSI 28-48")
+    if "H4" in frames and tf_direction(frames["H4"]) not in (score["bias"], None):
+        risk_reasons.append("H4 contradicts scalp trend")
     if score["confidence_pct"] < MIN_SCORE:
-        risk_reasons.append("Score below 51")
-    return {"account_key":key, "symbol":symbol, "bar":bar,
-            "bias":score["bias"], "confidence_pct":score["confidence_pct"],
-            "technical_ok":not risk_reasons, "block_reasons":risk_reasons,
-            "fundamental":"NOT_CONNECTED",
-            "score_type":"INDICATOR_ALIGNMENT_NOT_WIN_PROBABILITY"}
+        risk_reasons.append("Indicator alignment below 51")
+    return {"account_key": key, "symbol": symbol, "bar": bar,
+            "bias": score["bias"], "confidence_pct": score["confidence_pct"],
+            "technical_ok": not risk_reasons, "block_reasons": risk_reasons,
+            "timeframes": list(frames.keys()),
+            "score_type": "INDICATOR_ALIGNMENT_NOT_WIN_PROBABILITY"}
 
-def _model_check(plan, frames):
+def _model_check(plan, frames, fundamental):
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         return False, "Gemini is not configured"
@@ -91,20 +104,25 @@ def _model_check(plan, frames):
         return False, "Invalid Gemini model"
     # AI veto only; no AI-generated trade sizes or invented statistics.
     payload_data = {"symbol":plan["symbol"],"proposed_bias":plan["bias"],
+                    "verified_calendar": fundamental,
                     "indicators":[{
                         "timeframe":f["timeframe"],
                         "last_closed_candle":f["candles"][-1],
                         "indicators":f["indicators"]
                     } for f in frames]}
     prompt = (
-        "Anda analis teknikal MetaTrader. Tinjau sinyal BUY/SELL yang dihitung aturan."
-        " Hanya data closed bar yang tersedia. Tidak ada feed berita fundamental."
-        " Jawab JSON dengan fields decision (BUY, SELL, atau NO_TRADE) dan"
-        " reason (maksimum 12 kata). Jangan mengarang peluang menang, berita,"
-        " stop loss, atau harga. Bila bukti saling bertentangan, NO_TRADE."
-        " Jika keputusan berbeda dari proposed_bias, sistem tidak akan trading."
+        "Anda analis scalping MT4/MT5 dengan konfirmasi kalender fundamental. "
+        "Dilarang membuat berita/data baru. Data verified_calendar berasal dari "
+        "kalender ekonomi, tidak menjamin arah harga. "
+        "Jika teknikal bertentangan, tidak cukup data, atau recent releases berpotensi "
+        "mengubah kondisi namun tidak bisa ditafsirkan, pilih NO_TRADE. "
+        "Jawab JSON dengan decision BUY/SELL/NO_TRADE, fundamental_compatible boolean, "
+        "reason maksimal 18 kata. fundamental_compatible berarti tidak ada risiko "
+        "makro terverifikasi yang bertentangan, BUKAN konfirmasi kenaikan/penurunan harga "
+        "atau probabilitas kemenangan. Jangan membuat angka atau target harga."
         + json.dumps(payload_data, ensure_ascii=False, separators=(",",":"))
     )
+
     body = json.dumps({"contents":[{"parts":[{"text":prompt}]}],
                        "generationConfig":{"responseMimeType":"application/json",
                                             "temperature":0.1,
@@ -118,28 +136,47 @@ def _model_check(plan, frames):
             result = json.load(r)
         response = json.loads(result["candidates"][0]["content"]["parts"][0]["text"])
         decision = response["decision"]
-        return decision == plan["bias"], str(response.get("reason",""))[:100]
+        compatible = response.get("fundamental_compatible") is True
+        return decision == plan["bias"] and compatible, str(response.get("reason",""))[:100]
     except (urllib.error.URLError, urllib.error.HTTPError, ValueError, KeyError, IndexError, TypeError):
         return False, "Gemini unavailable / invalid response"
 
 def build_plan(request: StrategyRequest, *, use_ai: bool):
     key = account_key(request)
     item = _get(key)
-    if item["snapshot"]["platform"] != request.platform or item["snapshot"]["login"] != request.login or item["snapshot"]["server"] != request.server:
+    if (item["snapshot"]["platform"] != request.platform
+            or item["snapshot"]["login"] != request.login
+            or item["snapshot"]["server"] != request.server):
         raise HTTPException(403, "Account mismatch")
     plan = signal_from_snapshot(key, request.symbol)
     plan["mode"] = "DEMO_ACCOUNT_ONLY"
     plan["demo_execution_requires_explicit_ea_opt_in"] = True
     plan["trade_eligible"] = False
     plan["ai_checked"] = False
-    # Separate server-side kill switch, default OFF, independent of EA Inputs.
     plan["server_demo_enabled"] = os.getenv("DEMO_EA_STRATEGY_ENABLED", "").lower() == "true"
     if not plan["server_demo_enabled"]:
-        plan["block_reasons"].append("Railway demo EA strategy is disabled")
-    if not plan["technical_ok"] or not use_ai or not plan["server_demo_enabled"]:
+        plan["block_reasons"].append("Railway demo strategy disabled")
+    # Economic calendar gate is mandatory even on DEMO. No provider/key => BLOCK.
+    fundamental = None
+    try:
+        fundamental = calendar_context(request.symbol)
+        plan["fundamental"] = {
+            "status": fundamental["status"], "source": fundamental["source"],
+            "nearby_events": fundamental["news_blackout_events"],
+            "recent_releases": fundamental["recent_high_impact"],
+        }
+        if not fundamental["can_open_new_position"]:
+            plan["block_reasons"].append("Fundamental news blackout")
+    except CalendarUnavailable as exc:
+        plan["fundamental"] = {"status": "UNAVAILABLE", "reason": str(exc)}
+        plan["block_reasons"].append("Verified fundamental calendar unavailable")
+    if plan["block_reasons"] or not use_ai:
         return plan
     now = time.time()
-    cache_id = (key, request.symbol, plan["bar"], plan["bias"])
+    # Cache per bar and calendar state; never reuse confirmations across release regimes.
+    recent_ids = tuple(e["event"]+e["date_utc"] for e in fundamental["recent_high_impact"])
+    cache_id = (key, request.symbol, plan["bar"], plan["bias"],
+                fundamental["status"], recent_ids)
     with _lock:
         cached = _cache.get(cache_id)
         if cached and now < cached["expires"]:
@@ -148,15 +185,15 @@ def build_plan(request: StrategyRequest, *, use_ai: bool):
             ok, reason = _model_check(plan, [
                 v["frame"] for v in item["frame_map"].values()
                 if v["frame"]["symbol"] == request.symbol
-                and now-v["received_at"] < MAX_FRAME_AGE])
-            _cache[cache_id] = {"ok":ok, "reason":reason,
-                                "expires":now+(CACHE_SECONDS if ok else 120)}
+                and now-v["received_at"] < MAX_FRAME_AGE], fundamental)
+            _cache[cache_id] = {"ok": ok, "reason": reason,
+                                "expires": now + (CACHE_SECONDS if ok else 120)}
     plan["ai_checked"] = True
     plan["ai_concurs"] = ok
     plan["ai_reason"] = reason
-    plan["trade_eligible"] = bool(ok and plan["technical_ok"])
+    plan["trade_eligible"] = bool(ok and fundamental["can_open_new_position"])
     if not ok:
-        plan["block_reasons"].append("AI did not confirm the bias")
+        plan["block_reasons"].append("AI did not confirm fundamentals and technical bias")
     return plan
 
 @router.post("/api/bridge/strategy", dependencies=[Depends(bridge_access)])
