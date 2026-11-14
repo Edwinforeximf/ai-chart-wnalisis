@@ -92,3 +92,23 @@ def test_short_ai_response_without_wait(monkeypatch):
         assert result["broker_order_placed"] is False
         assert "reason" in result and "risk" in result
         assert "analysis" not in result
+
+
+def test_signed_session_survives_process_restart_and_rejects_tampering():
+    # No process-local session lookup: a matching signed cookie survives redeploy.
+    from live_bridge import _issue_session, _verify_session, SESSION_SECONDS
+    import time
+    token = _issue_session(int(time.time()))
+    assert _verify_session(token) is True
+    payload = token.split(".")
+    tampered = ".".join([payload[0], payload[1], "attackerNonce", payload[3]])
+    assert _verify_session(tampered) is False
+    assert _verify_session("invalid") is False
+    assert SESSION_SECONDS == 30 * 86400
+
+def test_live_page_disables_http_caching():
+    with TestClient(app, base_url="https://testserver") as browser:
+        res = browser.get("/live")
+        assert res.status_code == 200
+        assert "no-store" in res.headers["cache-control"]
+        assert "30 hari" in res.text

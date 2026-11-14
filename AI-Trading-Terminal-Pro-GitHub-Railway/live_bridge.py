@@ -1,4 +1,5 @@
 """Read-only MT4/MT5 bridge. No broker credentials, execution, or close orders."""
+import base64
 import hashlib
 import hmac
 import json
@@ -20,10 +21,9 @@ from pydantic import BaseModel, Field
 router = APIRouter()
 _lock = RLock()
 _snapshots = {}
-_sessions = {}  # Temporary login sessions; redeploy invalidates them.
 _pin_attempts = {}  # Failed PIN attempts by connecting IP.
 _global_pin_failures = []
-SESSION_SECONDS = 8 * 3600
+SESSION_SECONDS = 30 * 24 * 3600  # Remember this browser for 30 days
 MAX_AGE_SECONDS = 120
 TF = Literal["M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1", "MN1"]
 
@@ -71,16 +71,44 @@ def _check(candidate: str | None, expected: str, kind: str):
     if not candidate or not hmac.compare_digest(candidate, token):
         raise HTTPException(401, f"Invalid {kind} token")
 
+def _session_secret() -> bytes:
+    # Reuse the existing server-only, high-entropy secret. It is never sent to the browser.
+    secret = os.getenv("DASHBOARD_SESSION_SECRET") or os.getenv("DASHBOARD_TOKEN", "")
+    if len(secret) < 24:
+        raise HTTPException(503, "Set DASHBOARD_SESSION_SECRET (24+ random characters) in Railway")
+    return secret.encode("utf-8")
+
+
+def _issue_session(now: int) -> str:
+    expires = now + SESSION_SECONDS
+    payload = f"v1.{expires}.{secrets.token_urlsafe(24)}"
+    sig = hmac.new(_session_secret(), payload.encode("ascii"), hashlib.sha256).digest()
+    signature = base64.urlsafe_b64encode(sig).decode("ascii").rstrip("=")
+    return f"{payload}.{signature}"
+
+
+def _verify_session(cookie: str) -> bool:
+    try:
+        version, exp, nonce, sig = cookie.split(".")
+        if version != "v1" or len(cookie) > 256:
+            return False
+        expires = int(exp)
+        now = int(time.time())
+        if not (now < expires <= now + SESSION_SECONDS):
+            return False
+        payload = f"{version}.{exp}.{nonce}"
+        expected = hmac.new(_session_secret(), payload.encode("ascii"), hashlib.sha256).digest()
+        actual = base64.urlsafe_b64decode(sig + "=" * (-len(sig) % 4))
+        return hmac.compare_digest(expected, actual)
+    except (ValueError, TypeError, UnicodeError):
+        return False
+
+
 def dashboard_access(request: Request, authorization: str | None = Header(default=None)):
-    """HTTP-only browser session or legacy long dashboard bearer token."""
+    """Read-only browser session or server-side legacy bearer for API clients."""
     cookie = request.cookies.get("tt_session", "")
-    now = time.time()
-    with _lock:
-        expiry = _sessions.get(cookie) if cookie else None
-        if expiry and expiry > now:
-            return
-        if expiry:
-            _sessions.pop(cookie, None)
+    if cookie and _verify_session(cookie):
+        return
     bearer = authorization[7:] if authorization and authorization.startswith("Bearer ") else None
     expected = os.getenv("DASHBOARD_TOKEN", "")
     if bearer and len(expected) >= 24 and hmac.compare_digest(bearer, expected):
@@ -112,8 +140,7 @@ def pin_login(body: PinLogin, request: Request, response: Response):
             global_failures.append(now)
             raise HTTPException(401, "Incorrect dashboard code")
         _pin_attempts.pop(ip, None)
-        token = secrets.token_urlsafe(32)
-        _sessions[token] = now + SESSION_SECONDS
+        token = _issue_session(int(now))
     response.set_cookie("tt_session", token, max_age=SESSION_SECONDS, httponly=True,
                         secure=True, samesite="strict", path="/api/live")
     response.headers["Cache-Control"] = "no-store"
@@ -128,9 +155,8 @@ def pin_session(_: None = Depends(dashboard_access)):
 
 @router.post("/api/live/logout")
 def pin_logout(request: Request, response: Response):
-    cookie = request.cookies.get("tt_session", "")
-    with _lock:
-        _sessions.pop(cookie, None)
+    # Logout removes the cookie from this browser; rotate the server signing
+    # secret to invalidate all active devices if needed.
     response.delete_cookie("tt_session", path="/api/live", secure=True, httponly=True,
                            samesite="strict")
     response.headers["Cache-Control"] = "no-store"
@@ -148,7 +174,11 @@ def _age(item):
 
 @router.get("/live", response_class=HTMLResponse)
 def live_home():
-    return (Path(__file__).parent / "live.html").read_text(encoding="utf-8")
+    return HTMLResponse(
+        content=(Path(__file__).parent / "live.html").read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate",
+                 "Pragma": "no-cache", "Expires": "0"}
+    )
 
 @router.get("/api/live/status", dependencies=[Depends(dashboard_access)])
 def live_status():
