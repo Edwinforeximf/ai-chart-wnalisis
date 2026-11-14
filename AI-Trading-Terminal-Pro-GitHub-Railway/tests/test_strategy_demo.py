@@ -50,6 +50,7 @@ def publish(server="Broker-Demo",login=99881,frames=None):
     return {"platform":"MT4","login":login,"server":server,"symbol":"XAUUSD"}
 
 def test_no_broker_orders_and_no_auth_bypass(monkeypatch):
+    monkeypatch.delenv("DEMO_EA_STRATEGY_ENABLED", raising=False)
     p=publish(login=99871)
     assert client.post("/api/bridge/strategy",json=p).status_code == 401
     r=client.post("/api/live/strategy-preview",json=p,headers=DASH)
@@ -58,9 +59,11 @@ def test_no_broker_orders_and_no_auth_bypass(monkeypatch):
     assert j["confidence_pct"]>=51
     assert j["score_type"]=="INDICATOR_ALIGNMENT_NOT_WIN_PROBABILITY"
     assert j["trade_eligible"] is False
+    assert j["server_demo_enabled"] is False
     assert j["mode"]=="DEMO_ACCOUNT_ONLY"
 
 def test_ai_agreement_unlocks_only_demo_signal(monkeypatch):
+    monkeypatch.setenv("DEMO_EA_STRATEGY_ENABLED", "true")
     p=publish(login=99872)
     monkeypatch.setattr(strategy_bridge,"_model_check",lambda plan,frames:(True,"EMA & MACD aligned"))
     r=client.post("/api/bridge/strategy",json=p,headers=AUTH)
@@ -73,12 +76,14 @@ def test_ai_agreement_unlocks_only_demo_signal(monkeypatch):
     assert client.get("/api/live/status",headers=DASH).json()["broker_execution_enabled"] is False
 
 def test_technical_risk_veto(monkeypatch):
+    monkeypatch.setenv("DEMO_EA_STRATEGY_ENABLED", "true")
     p=publish(login=99873,frames=[make_frame(tf) for tf in ["M15","H1"]])
     monkeypatch.setattr(strategy_bridge,"_model_check",lambda plan,frames:(True,"AI agreed"))
     r=client.post("/api/bridge/strategy",json=p,headers=AUTH)
     assert r.text.startswith("BLOCK|")
 
 def test_disagreement_veto(monkeypatch):
+    monkeypatch.setenv("DEMO_EA_STRATEGY_ENABLED", "true")
     p=publish(login=99874)
     monkeypatch.setattr(strategy_bridge,"_model_check",lambda plan,frames:(False,"Conflicting indicators"))
     r=client.post("/api/bridge/strategy",json=p,headers=AUTH)
