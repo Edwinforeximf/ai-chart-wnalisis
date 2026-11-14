@@ -132,7 +132,11 @@ def build_plan(request: StrategyRequest, *, use_ai: bool):
     plan["demo_execution_requires_explicit_ea_opt_in"] = True
     plan["trade_eligible"] = False
     plan["ai_checked"] = False
-    if not plan["technical_ok"] or not use_ai:
+    # Separate server-side kill switch, default OFF, independent of EA Inputs.
+    plan["server_demo_enabled"] = os.getenv("DEMO_EA_STRATEGY_ENABLED", "").lower() == "true"
+    if not plan["server_demo_enabled"]:
+        plan["block_reasons"].append("Railway demo EA strategy is disabled")
+    if not plan["technical_ok"] or not use_ai or not plan["server_demo_enabled"]:
         return plan
     now = time.time()
     cache_id = (key, request.symbol, plan["bar"], plan["bias"])
