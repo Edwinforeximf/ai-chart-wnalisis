@@ -5,6 +5,7 @@ import json
 import os
 import re
 import time
+import secrets
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -12,13 +13,17 @@ from pathlib import Path
 from threading import RLock
 from typing import Literal
 
-from fastapi import APIRouter, Header, HTTPException, Request, Depends
+from fastapi import APIRouter, Header, HTTPException, Request, Depends, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 router = APIRouter()
 _lock = RLock()
 _snapshots = {}
+_sessions = {}  # Temporary login sessions; redeploy invalidates them.
+_pin_attempts = {}  # Failed PIN attempts by connecting IP.
+_global_pin_failures = []
+SESSION_SECONDS = 8 * 3600
 MAX_AGE_SECONDS = 120
 TF = Literal["M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1", "MN1"]
 
@@ -66,9 +71,70 @@ def _check(candidate: str | None, expected: str, kind: str):
     if not candidate or not hmac.compare_digest(candidate, token):
         raise HTTPException(401, f"Invalid {kind} token")
 
-def dashboard_access(authorization: str | None = Header(default=None)):
-    token = authorization[7:] if authorization and authorization.startswith("Bearer ") else None
-    _check(token, "DASHBOARD_TOKEN", "dashboard")
+def dashboard_access(request: Request, authorization: str | None = Header(default=None)):
+    """HTTP-only browser session or legacy long dashboard bearer token."""
+    cookie = request.cookies.get("tt_session", "")
+    now = time.time()
+    with _lock:
+        expiry = _sessions.get(cookie) if cookie else None
+        if expiry and expiry > now:
+            return
+        if expiry:
+            _sessions.pop(cookie, None)
+    bearer = authorization[7:] if authorization and authorization.startswith("Bearer ") else None
+    expected = os.getenv("DASHBOARD_TOKEN", "")
+    if bearer and len(expected) >= 24 and hmac.compare_digest(bearer, expected):
+        return
+    raise HTTPException(401, "Dashboard PIN login required")
+
+
+class PinLogin(BaseModel):
+    pin: str = Field(pattern=r"^[0-9]{4}$")
+
+
+@router.post("/api/live/login")
+def pin_login(body: PinLogin, request: Request, response: Response):
+    """Four-digit PIN is for read-only dashboard convenience, not order authorization."""
+    expected = os.getenv("DASHBOARD_PIN", "")
+    if not re.fullmatch(r"[0-9]{4}", expected):
+        raise HTTPException(503, "Set DASHBOARD_PIN (4 digits) in Railway Variables")
+    now = time.time()
+    ip = request.client.host if request.client else "unknown"
+    with _lock:
+        failures = [t for t in _pin_attempts.get(ip, []) if now - t < 900]
+        global_failures = [t for t in _global_pin_failures if now - t < 900]
+        _pin_attempts[ip] = failures
+        _global_pin_failures[:] = global_failures
+        if len(failures) >= 5 or len(global_failures) >= 40:
+            raise HTTPException(429, "Too many PIN attempts. Try again later.")
+        if not hmac.compare_digest(body.pin, expected):
+            failures.append(now)
+            global_failures.append(now)
+            raise HTTPException(401, "Incorrect dashboard code")
+        _pin_attempts.pop(ip, None)
+        token = secrets.token_urlsafe(32)
+        _sessions[token] = now + SESSION_SECONDS
+    response.set_cookie("tt_session", token, max_age=SESSION_SECONDS, httponly=True,
+                        secure=True, samesite="strict", path="/api/live")
+    response.headers["Cache-Control"] = "no-store"
+    return {"ok": True, "expires_in_seconds": SESSION_SECONDS,
+            "mode": "READ_ONLY"}
+
+
+@router.get("/api/live/session")
+def pin_session(_: None = Depends(dashboard_access)):
+    return {"authenticated": True, "mode": "READ_ONLY"}
+
+
+@router.post("/api/live/logout")
+def pin_logout(request: Request, response: Response):
+    cookie = request.cookies.get("tt_session", "")
+    with _lock:
+        _sessions.pop(cookie, None)
+    response.delete_cookie("tt_session", path="/api/live", secure=True, httponly=True,
+                           samesite="strict")
+    response.headers["Cache-Control"] = "no-store"
+    return {"logged_out": True}
 
 def bridge_access(x_bridge_key: str | None = Header(default=None)):
     _check(x_bridge_key, "BRIDGE_TOKEN", "bridge")
@@ -154,6 +220,41 @@ class AnalysisRequest(BaseModel):
     account_key: str
     symbol: str = Field(min_length=1, max_length=48)
 
+def _indicator_alignment(frames):
+    """Rule-based directional agreement score; never a win probability."""
+    tf_weight = {"M1": 0.45, "M5": 0.6, "M15": 0.85, "M30": 1.0,
+                 "H1": 1.3, "H4": 1.6, "D1": 1.8, "W1": 1.2, "MN1": 1.2}
+    signed = 0.0
+    available = 0.0
+
+    def vote(a, b, weight):
+        nonlocal signed, available
+        if a is not None and b is not None:
+            signed += weight * (1 if a > b else -1 if a < b else 0)
+            available += weight
+
+    for frame in frames:
+        w = tf_weight.get(frame["timeframe"], 1.0)
+        ind = frame["indicators"]
+        close = frame["candles"][-1]["close"]
+        vote(ind.get("ema20"), ind.get("ema50"), 2.0*w)
+        vote(close, ind.get("ema20"), 1.1*w)
+        vote(ind.get("macd_main"), ind.get("macd_signal"), 1.3*w)
+        vote(ind.get("di_plus"), ind.get("di_minus"), 1.1*w)
+        rsi = ind.get("rsi14")
+        if rsi is not None:
+            signed += (1 if rsi > 52 else -1 if rsi < 48 else 0) * 0.8*w
+            available += 0.8*w
+    if available < 1:
+        raise HTTPException(422, "Insufficient native indicator data")
+    bias = "BUY" if signed >= 0 else "SELL"
+    # Scores measure indicator agreement only. Do not interpret as trade win probability.
+    confidence = round(50 + 40 * min(1, abs(signed) / available))
+    return {"bias": bias, "confidence_pct": confidence,
+            "score_type": "INDICATOR_ALIGNMENT_NOT_WIN_PROBABILITY",
+            "setup_status": "SETUP_OK" if confidence >= 60 else "LOW_CONFIDENCE_NO_ENTRY"}
+
+
 @router.post("/api/live/analyze", dependencies=[Depends(dashboard_access)])
 def live_analyze(body: AnalysisRequest):
     item = _get(body.account_key)
@@ -164,28 +265,27 @@ def live_analyze(body: AnalysisRequest):
               and time.time()-v["received_at"] < MAX_AGE_SECONDS]
     if len(frames) < 2:
         raise HTTPException(422, "Insufficient timeframe coverage")
+    score = _indicator_alignment(frames)
     if not os.getenv("GEMINI_API_KEY"):
         raise HTTPException(503, "Set GEMINI_API_KEY in Railway to enable AI")
     safe_data = {
-        "platform": item["snapshot"]["platform"],
         "symbol": body.symbol,
-        "server_timeframes": [
+        "technical_bias": score["bias"],
+        "confidence_alignment_score": score["confidence_pct"],
+        "timeframes": [
             {"timeframe": f["timeframe"], "last_closed_candle": f["candles"][-1],
              "indicators": f["indicators"]} for f in frames
         ],
-        "fundamental_feed": "NOT_CONNECTED"
+        "fundamentals": "NOT_CONNECTED",
     }
     prompt = (
-        "Anda analis teknikal trading. Jawab Bahasa Indonesia dalam JSON saja. "
-        "Hanya analisis data indikator native MetaTrader dan candle tertutup yang diberikan. "
-        "Jangan mengarang berita, kalender ekonomi, harga live, yield, probabilitas keberhasilan, "
-        "entry/SL/TP yang tak didukung, atau konfirmasi fundamental. "
-        "Timeframe harus disebut. Return JSON object with fields "
-        "decision (BUY/SELL/WAIT), summary (string), evidence (array of short strings), "
-        "risks (array of short strings), fundamental_status (NOT_CONNECTED), "
-        "disclaimer (string). "
-        "Jika indikator berkonflik atau tidak cukup data, pilih WAIT. "
-        "Ini laporan analisis read-only; tidak ada order yang boleh dijalankan.\n"
+        "Anda analis teknikal. Jawab hanya JSON dengan tepat dua field string: "
+        "reason dan risk. Reason maksimal 18 kata, risk maksimal 15 kata. "
+        "Gunakan Bahasa Indonesia yang jelas dan ringkas, sebut indikator yang relevan. "
+        "Jelaskan bias yang sudah dihitung dari indikator. Jangan buat perkiraan "
+        "probabilitas kemenangan, jangan buat berita fundamental, harga baru, TP/SL, "
+        "atau ajakan entry. Sebut konflik antar timeframe jika ada. "
+        "Tidak boleh ada markdown, paragraf panjang atau daftar. "
         + json.dumps(safe_data, ensure_ascii=False, separators=(",", ":"))
     )
     model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
@@ -193,23 +293,29 @@ def live_analyze(body: AnalysisRequest):
         raise HTTPException(500, "Invalid GEMINI_MODEL config")
     payload = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
                           "generationConfig": {"responseMimeType": "application/json",
-                                               "temperature": 0.2, "maxOutputTokens": 1100}}).encode()
+                                               "temperature": 0.2,
+                                               "maxOutputTokens": 300}}).encode()
     req = urllib.request.Request(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         data=payload, method="POST",
         headers={"Content-Type": "application/json",
                  "x-goog-api-key": os.environ["GEMINI_API_KEY"]})
     try:
-        with urllib.request.urlopen(req, timeout=25) as response:
-            reply = json.load(response)
-        text = reply["candidates"][0]["content"]["parts"][0]["text"]
-        report = json.loads(text)
-        if report.get("decision") not in ("BUY", "SELL", "WAIT"):
-            raise ValueError("AI decision not recognized")
-        report["fundamental_status"] = "NOT_CONNECTED"
+        with urllib.request.urlopen(req, timeout=25) as reply:
+            result = json.load(reply)
+        text = result["candidates"][0]["content"]["parts"][0]["text"]
+        obj = json.loads(text)
+        if not isinstance(obj, dict):
+            raise ValueError("Invalid AI response")
+        reason = " ".join(str(obj.get("reason", "")).split())[:160]
+        risk = " ".join(str(obj.get("risk", "")).split())[:120]
+        if not reason or not risk:
+            raise ValueError("Missing AI explanation")
         return {"mode": "AI_READ_ONLY", "provider": "Gemini", "model": model,
-                "symbol": body.symbol, "analysis": report,
+                "symbol": body.symbol, **score,
+                "reason": reason, "risk": risk,
+                "fundamental_status": "NOT_CONNECTED",
                 "data_age_seconds": _age(item), "broker_order_placed": False}
-    except (urllib.error.HTTPError, urllib.error.URLError, ValueError, KeyError, IndexError) as exc:
-        # Do not echo provider errors, which may include confidential metadata.
+    except (urllib.error.HTTPError, urllib.error.URLError, ValueError,
+            KeyError, IndexError, TypeError):
         raise HTTPException(502, "AI provider failed or returned invalid output") from None
